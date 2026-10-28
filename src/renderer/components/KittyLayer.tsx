@@ -41,8 +41,8 @@ interface Props {
 }
 
 // ── Geometry (CSS px; the ctx is pre-scaled to dpr) ──────────────────────────────
-const MIN_SPACING_EARS = 5;   // below this bar spacing the cats would be mush → skip (plain candles)
-const MIN_SPACING_FACE = 16;  // draw eyes/nose/whiskers only when bars are this wide
+const MIN_SPACING_EARS = 2;   // ears draw down to ~2px/candle so a kitty theme always shows cats
+const MIN_SPACING_FACE = 12;  // draw eyes/nose/whiskers only when bars are this wide
 const MIN_BODY_FACE = 9;      // …and the body is at least this tall (room for a face)
 
 /** True when the active theme is a kitty theme (its `theme-<id>` body class is in the set). */
@@ -125,8 +125,10 @@ export function KittyLayer({ paneRef, chart }: Props) {
     /** One cat: ears on the body top, and (when wide+tall enough) a wee face. The body is
      *  the candle body the user already sees; we only paint the cute bits over it. */
     function kitty(ctx: CanvasRenderingContext2D, x: number, yTop: number, yBot: number, spacing: number, color: string, halo: string, eye: string) {
-      const bodyHalfW = Math.max(2, Math.min(spacing * 0.34, 22));
-      const earH = Math.max(3, Math.min(spacing * 0.36, 18));
+      // Cap the cat to its candle slot (<= half the spacing) so dense zoom stays tidy; a small
+      // floor keeps it visible when narrow. Unchanged at normal/high spacing.
+      const bodyHalfW = Math.min(Math.max(1.2, spacing * 0.34), 22, spacing * 0.5);
+      const earH = Math.max(2.5, Math.min(spacing * 0.36, 18));
       const earBaseInner = bodyHalfW * 0.18;
       const earApexInset = bodyHalfW * 0.55;
 

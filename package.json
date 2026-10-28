@@ -1,6 +1,6 @@
 {
   "name": "@tickerall/web-terminal",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "The TickerAll web terminal — chart any symbol and trade live against any MT4/MT5 broker through the TickerAll API, in the browser.",
   "type": "module",
   "license": "MIT",
