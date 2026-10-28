@@ -1,0 +1,57 @@
+{
+  "name": "@tickerall/web-terminal",
+  "version": "0.3.0",
+  "description": "The TickerAll web terminal — chart any symbol and trade live against any MT4/MT5 broker through the TickerAll API, in the browser.",
+  "type": "module",
+  "license": "MIT",
+  "author": "TickerAll",
+  "homepage": "https://tickerall.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TickerAll/tickerall-web-terminal.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TickerAll/tickerall-web-terminal/issues"
+  },
+  "keywords": [
+    "tickerall",
+    "trading",
+    "terminal",
+    "mt5",
+    "mt4",
+    "forex",
+    "charts"
+  ],
+  "main": "dist/web/web.mjs",
+  "exports": {
+    ".": "./dist/web/web.mjs",
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "lightweight-charts": "^4.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.3"
+  }
+}

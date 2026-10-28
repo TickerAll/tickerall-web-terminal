@@ -1,0 +1,1830 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; worker-src 'self' blob:" />
+    <title>TickerAll Terminal</title>
+    <link rel="stylesheet" href="renderer.css" />  <!-- the renderer's bundled CSS (emitted by esbuild) -->
+    <style>
+      /* Theme tokens (Foundation 2). These defaults are the EXACT colours that were
+         hardcoded before the variable-ize pass, so the dark theme renders pixel-
+         identical even before React/ThemeProvider mounts. The ThemeProvider overrides
+         every one of these on <html> via style.setProperty when a theme is active.
+         Var names mirror src/renderer/theme/tokens.ts (`rowLine` → `--row-line`). */
+      :root {
+        /* core surfaces & text */
+        --bg:#0e1116; --panel:#11161d; --panel2:#0d1117; --line:#1d2530; --line2:#28323f;
+        --fg:#c9d1d9; --muted:#7d8590; --accent:#2f81f7; --up:#26a69a; --down:#ef5350; --gold:#f0b90b;
+        /* extra surfaces from the variable-ize pass */
+        --on-accent:#fff; --hover:#161d27; --sel:#16202c; --row-line:#131a22; --row-hover:#131a22;
+        --surface:#0f141b; --acct-active:#101822; --input-ro:#0c1014; --line-hover:#2f3b49;
+        --google-fg:#1f1f1f; --shadow:#000a; --backdrop:#0008; --chart-loading-bg:rgba(14,17,22,0.92);
+        /* green accent family */
+        --green:#3fb950; --green-glow:#3fb95088; --green-bg:#12331f; --green-line:#1c4a2c; --green-bg-hover:#163e25;
+        --amber:#d29922;
+        /* connecting pill */
+        --pill-fg:#9cc4ff; --pill-bg:#11233f; --pill-line:#1d3a63;
+        /* chart colours (also set on the LWC canvas via chartTheme.ts) */
+        --chart-bg:#0e1116; --scale-text:#9aa4b2; --grid:#161d27; --scale-border:#222b36;
+        --up-body:#26a69a; --down-body:#ef5350; --wick:#26a69a; --candle-border:transparent;
+        --watermark:rgba(124,133,144,0.10);
+        --equity-bg:#0d1117; --equity-text:#7d8590; --equity-line:#2f81f7; --balance-line:#7d8590;
+        /* skin chrome (overridden by .theme-8bit / .theme-16bit) */
+        --skin-font: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        --skin-border-width: 1px;
+        --skin-radius-mult: 1;
+      }
+      * { box-sizing: border-box; }
+      html, body, #root { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--fg);
+        font:12.5px/1.4 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      .center { display:flex; align-items:center; justify-content:center; height:100vh; height:100dvh; }
+      .muted { color:var(--muted); } .tiny { font-size:11px; }
+      .up { color:var(--up); } .down { color:var(--down); }
+      .num { text-align:right; font-variant-numeric:tabular-nums; }
+      .sym { font-weight:600; }
+      button { cursor:pointer; font-family:inherit; }
+      button:disabled { opacity:.45; cursor:default; }
+      input, select { font-family:inherit; }
+      .linkbtn { background:none; border:0; color:var(--accent); font-size:11px; padding:0; }
+      .linkbtn:hover { text-decoration:underline; }
+      .iconbtn { background:none; border:0; color:var(--muted); font-size:15px; line-height:1; padding:0 4px; }
+      .iconbtn:hover { color:var(--fg); }
+      .primary { background:var(--accent); border:0; color:var(--on-accent); font-weight:600; border-radius:6px; padding:9px; }
+      .primary.sm { padding:7px 12px; font-size:12px; }
+      .danger { background:var(--down); border:0; color:#fff; font-weight:600; border-radius:6px; padding:9px; cursor:pointer; }
+      .danger.sm { padding:7px 12px; font-size:12px; }
+      .rm { background:none; border:0; color:var(--muted); font-size:14px; line-height:1; padding:0 4px; visibility:hidden; }
+      tr:hover .rm, .nav-acct-row:hover .rm { visibility:visible; }
+      .rm:hover { color:var(--down); }
+      /* Remove-from-roster trash on each account row — hover-reveal on desktop like .rm,
+         always-visible on mobile (set below); muted → down (destructive) on hover. */
+      .nav-rm-acct { background:none; border:0; color:var(--muted); padding:0 3px; cursor:pointer; visibility:hidden; display:inline-flex; align-items:center; }
+      .nav-acct-row:hover .nav-rm-acct { visibility:visible; }
+      .nav-rm-acct:hover { color:var(--down); }
+      .nav-confirm-rm { padding:8px 10px 10px; background:var(--panel2); }
+      .chk { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:11px; margin:6px 0; }
+      .chk input { width:auto; }
+
+      /* ── Login (unchanged) ── */
+      .login { display:flex; align-items:center; justify-content:center; height:100vh; height:100dvh; }
+      .login .card { width:min(340px, calc(100vw - 24px)); box-sizing:border-box; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:28px 26px; }
+      .login h1 { font-size:20px; margin:0 0 4px; letter-spacing:.3px; }
+      .login h1 span { color:var(--accent); }
+      .login p.sub { color:var(--muted); margin:0 0 22px; font-size:12.5px; }
+      .login label { display:block; color:var(--muted); margin:12px 0 4px; font-size:11px; }
+      .login input { width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:7px; padding:9px 10px; font-size:13px; }
+      .login input:focus { outline:none; border-color:var(--accent); }
+      .login .primary { width:100%; margin-top:18px; }
+      .login .or { text-align:center; color:var(--muted); font-size:11px; margin:16px 0; position:relative; }
+      .login .or::before, .login .or::after { content:""; position:absolute; top:50%; width:38%; height:1px; background:var(--line); }
+      .login .or::before { left:0; } .login .or::after { right:0; }
+      .login .google { width:100%; background:var(--on-accent); color:var(--google-fg); border:0; border-radius:7px; padding:10px; font-weight:600; font-size:13px; display:flex; align-items:center; justify-content:center; gap:9px; }
+      .login .err { color:var(--down); font-size:12px; margin-top:14px; min-height:1em; }
+
+      /* ── MT5 shell ── */
+      /* height:100dvh (dynamic viewport) tracks the VISIBLE area as the mobile URL bar
+         shows/hides, so the last grid row (the bottom-nav on mobile) stays in view —
+         plain 100vh is the LARGE viewport (taller than visible) and overflow:hidden then
+         strands the nav below the fold. Desktop Electron has no URL bar → dvh == 100vh,
+         so this is a no-op there. */
+      #mt5 { display:grid; grid-template-columns:272px 1fr; grid-template-rows:42px 1fr 212px;
+        grid-template-areas:"toolbar toolbar" "left chart" "left toolbox"; height:100vh; height:100dvh; overflow:hidden; }
+
+      .toolbar { grid-area:toolbar; display:flex; align-items:center; gap:14px; padding:0 12px;
+        background:var(--panel); border-bottom:1px solid var(--line); }
+      .toolbar .tb-left { display:flex; align-items:baseline; gap:12px; min-width:0; flex:0 1 auto; }
+      /* Default (unbranded) wordmark: TICKER + an [ALL!] pill — the built-in house logo, which a
+         partner host replaces at runtime (see branding.ts / BrandLogo). Reset the <button> chrome
+         so it reads as text; reuse --skin-font so it's the pixel face under the 8-bit/16-bit skins
+         and the normal font elsewhere. Doubles as the "back to home" link. */
+      .toolbar .logo { font-size:13px; letter-spacing:.3px; display:inline-flex; align-items:center; gap:5px;
+        background:none; border:0; padding:0; margin:0; color:var(--fg); cursor:pointer; font-family:var(--skin-font); line-height:1; }
+      .toolbar .logo .logo-word { font-weight:700; letter-spacing:.5px; }
+      .toolbar .logo .logo-pill { color:var(--accent); border:1.5px solid var(--accent); border-radius:4px;
+        padding:1px 4px; font-weight:700; font-size:.8em; letter-spacing:.5px; line-height:1; }
+      /* Partner-branded logotype (host-injected data: URI, see branding.ts) — replaces the
+         text wordmark; sized to sit in the toolbar without stretching. */
+      .toolbar .logo .logo-img { height:18px; width:auto; max-height:22px; display:block; object-fit:contain; }
+      .toolbar .logo:hover .logo-word { color:var(--accent); }
+      .toolbar .logo:hover .logo-pill { background:var(--accent); color:var(--on-accent); }
+      .toolbar .active-sym { font-weight:700; font-size:13px; color:var(--accent); padding:2px 9px; border:1px solid var(--line2); border-radius:6px; background:var(--panel2); letter-spacing:.2px;
+        flex:none; max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      /* The timeframe strip is the toolbar's elastic zone: it shrinks and scrolls (hidden
+         scrollbar) so the right-hand action cluster is NEVER pushed off-screen at narrow
+         widths. The tb-left (logo/symbol) also shrinks; tb-right stays fixed-size. */
+      .tf-bar { display:flex; gap:2px; flex:1 1 auto; min-width:0; overflow-x:auto; scrollbar-width:none; }
+      .tf-bar::-webkit-scrollbar { display:none; }
+      .tf { flex:none; white-space:nowrap; background:transparent; border:1px solid transparent; color:var(--muted); border-radius:5px; padding:4px 8px; font-size:11px; font-weight:600; }
+      .tf:hover:not(:disabled) { color:var(--fg); background:var(--hover); }
+      .tf.on { color:var(--on-accent); background:var(--accent); }
+      .tb-right { display:flex; align-items:center; gap:12px; margin-left:auto; flex:none; }
+      /* Screen-size preview control (web only; TierToggle "bar" variant) — segmented icon
+         group in the toolbar's right cluster on desktop/tablet. (Mobile uses the ☰ drawer.) */
+      .tier-seg { display:inline-flex; align-items:center; gap:1px; flex:none; padding:2px;
+        border:1px solid var(--line2); border-radius:7px; background:var(--panel2); }
+      .tier-seg-btn { display:inline-flex; align-items:center; justify-content:center;
+        width:26px; height:24px; padding:0; border:0; border-radius:5px; cursor:pointer;
+        background:transparent; color:var(--muted); }
+      .tier-seg-btn:hover { color:var(--fg); background:var(--hover); }
+      .tier-seg-btn.on { color:var(--on-accent); background:var(--accent); }
+      /* Account control: an initials avatar that opens a dropdown (identity + Settings /
+         Home / Sign out). Replaces the old "<email> · sign out" text. */
+      .usermenu { position:relative; display:inline-flex; }
+      .usermenu-avatar { width:28px; height:28px; border-radius:50%; border:1px solid var(--line2); background:var(--accent);
+        color:var(--on-accent); font-size:11px; font-weight:700; letter-spacing:.3px; cursor:pointer;
+        display:inline-flex; align-items:center; justify-content:center; padding:0; }
+      .usermenu-avatar:hover { filter:brightness(1.08); }
+      .usermenu-pop { position:absolute; top:calc(100% + 6px); right:0; z-index:50; min-width:208px; max-width:260px;
+        background:var(--panel); border:1px solid var(--line2); border-radius:8px; box-shadow:0 8px 24px var(--shadow);
+        padding:6px; display:flex; flex-direction:column; gap:2px; }
+      .usermenu-id { padding:5px 9px 8px; border-bottom:1px solid var(--line); margin-bottom:4px; }
+      .usermenu-name { font-size:12.5px; font-weight:700; color:var(--fg); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .usermenu-email { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .usermenu-item { text-align:left; background:none; border:0; color:var(--fg); font-size:12.5px; padding:7px 9px; border-radius:6px; cursor:pointer; }
+      .usermenu-item:hover { background:var(--hover); }
+      .usermenu-danger { color:var(--down); }
+      .usermenu-div { height:1px; background:var(--line); margin:4px 2px; }
+      .neworder { background:var(--green-bg); color:var(--green); border:1px solid var(--green-line); border-radius:6px; padding:6px 14px; font-weight:600; font-size:12px; }
+      .neworder:hover:not(:disabled) { background:var(--green-bg-hover); }
+
+      .left { grid-area:left; display:flex; flex-direction:column; background:var(--panel); border-right:1px solid var(--line); min-height:0; }
+      .panel-h { display:flex; align-items:center; justify-content:space-between; padding:7px 10px;
+        font-size:10.5px; text-transform:uppercase; letter-spacing:.7px; color:var(--muted);
+        background:var(--surface); border-bottom:1px solid var(--line); }
+      .panel-h.sub { background:transparent; }
+
+      /* Market Watch */
+      .mw { flex:1.25 1 0; display:flex; flex-direction:column; min-height:0; border-bottom:1px solid var(--line); }
+      .mw-tabs { display:flex; gap:2px; padding:4px 6px; overflow-x:auto; border-bottom:1px solid var(--line); }
+      .mw-tab { background:var(--surface); border:1px solid var(--line); color:var(--muted); border-radius:5px; padding:3px 8px; font-size:11px; white-space:nowrap; }
+      .mw-tab.on { color:var(--on-accent); border-color:var(--accent); }
+      .mw-table { width:100%; border-collapse:collapse; flex:1; display:block; overflow:auto; min-height:0; }
+      .mw-table thead, .mw-table tbody { display:table; width:100%; table-layout:fixed; }
+      .mw-table thead { position:sticky; top:0; background:var(--panel); }
+      .mw-table th { text-align:left; color:var(--muted); font-weight:500; font-size:10.5px; padding:4px 8px; border-bottom:1px solid var(--line); }
+      .mw-table th.num { text-align:right; }
+      .mw-table td { padding:4px 8px; border-bottom:1px solid var(--row-line); }
+      .mw-table tr { cursor:pointer; }
+      .mw-table tbody tr:hover { background:var(--row-hover); }
+      .mw-table tr.sel { background:var(--sel); }
+      .mw-table td.x { width:22px; text-align:center; }
+      .mw-add { padding:6px; border-bottom:1px solid var(--line); }
+      .mw-add input { width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:6px 8px; font-size:12px; }
+      .mw-cands { max-height:160px; overflow:auto; margin-top:4px; }
+      .mw-cand { padding:5px 8px; cursor:pointer; border-radius:4px; }
+      .mw-cand:hover { background:var(--sel); }
+
+      /* Navigator */
+      .nav { flex:1 1 0; display:flex; flex-direction:column; min-height:0; }
+      .nav-list { overflow:auto; flex:1; min-height:0; }
+      .nav-acct { border-bottom:1px solid var(--row-line); }
+      .nav-acct.active { background:var(--acct-active); }
+      .nav-acct-row { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; }
+      .nav-acct-row:hover { background:var(--row-hover); }
+      .nav-acct-info { flex:1; min-width:0; }
+      .nav-acct-srv { font-weight:600; font-size:12px; }
+      .dot { width:8px; height:8px; border-radius:50%; flex:none; background:var(--muted); }
+      .dot.live { background:var(--green); box-shadow:0 0 6px var(--green-glow); }
+      .dot.ready { background:var(--accent); }
+      .dot.offline { background:var(--amber); }
+      .dot.rejected { background:var(--down); }
+      .connect-hint { color:var(--accent); }
+      .spinner { display:inline-block; width:9px; height:9px; border:1.5px solid var(--line2); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; }
+      @keyframes spin { to { transform:rotate(360deg); } }
+      @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+      .dot.connecting { background:var(--accent); animation:pulse 1s ease-in-out infinite; }
+      .connecting-text { display:inline-flex; align-items:center; gap:5px; color:var(--accent); white-space:nowrap; }
+      .connecting-pill { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--pill-fg); background:var(--pill-bg); border:1px solid var(--pill-line); border-radius:999px; padding:3px 10px; }
+      .connecting-pill .spinner, .connecting-text .spinner { width:8px; height:8px; }
+      .nav-pwd { padding:8px 10px 10px; background:var(--panel2); }
+      .nav-pwd input { width:100%; background:var(--bg); border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:6px 8px; margin-bottom:6px; font-size:12px; }
+      .nav-pwd input.readonly-num { color:var(--muted); background:var(--input-ro); cursor:default; font-variant-numeric:tabular-nums; letter-spacing:1px; }
+      .nav-pwd-actions { display:flex; align-items:center; gap:10px; }
+      .forget { display:block; padding:0 10px 8px; }
+      .nav-err { color:var(--down); padding:6px 10px; }
+      .nav-new { padding:8px 10px; border-top:1px solid var(--line); background:var(--panel2); }
+      .nav-new .row { display:grid; grid-template-columns:84px 1fr; gap:6px; margin-bottom:6px; }
+      .nav-new input, .nav-new select { width:100%; background:var(--bg); border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:6px 8px; margin-bottom:6px; font-size:12px; }
+      .nav-add { display:block; padding:9px 10px; text-align:left; border-top:1px solid var(--line); }
+
+      /* Chart (+ editor split) */
+      .chart-area { grid-area:chart; background:var(--bg); display:flex; flex-direction:column; min-width:0; min-height:0; position:relative; }
+      /* Sidebar collapse pull-tab (#13): a handle on the chart's LEFT edge (the sidebar
+         boundary). ALWAYS visible + tinted with the theme's --accent so it can't be missed AND
+         actually re-tints per theme (--gold was a yellow on every theme; --accent is the token
+         that varies across the spectrum — blue / teal / red / azure / green / gold per theme). */
+      .sidebar-pull { position:absolute; left:0; top:50%; transform:translateY(-50%); z-index:6;
+        width:17px; height:58px; padding:0; display:flex; align-items:center; justify-content:center;
+        background:var(--panel); color:var(--accent); border:1px solid var(--accent); border-left:0;
+        border-radius:0 8px 8px 0; cursor:pointer; font-size:15px; font-weight:700; box-shadow:2px 0 8px var(--shadow);
+        transition:background .12s, color .12s; }
+      .sidebar-pull:hover { background:var(--accent); color:var(--on-accent); }
+      .chart-body { position:relative; display:flex; flex:1 1 0; min-width:0; min-height:0; }
+      /* .chart-pane is a flex column: the chart (+ its absolute overlays) on top in
+         .chart-main, the indicator oscillator stack beneath. */
+      .chart-pane { position:relative; flex:1 1 0; min-width:0; display:flex; flex-direction:column; }
+      .chart-main { position:relative; flex:1 1 0; min-width:0; min-height:0; }
+
+      /* Big-price overlay — a draggable on-chart card (Item 13 redesign; no longer a
+         strip that shrinks the chart). */
+      .big-price { position:absolute; z-index:5; min-width:148px; padding:8px 12px 10px; cursor:grab;
+        background:var(--chart-loading-bg); border:1px solid var(--line2); border-radius:9px;
+        box-shadow:0 6px 20px var(--shadow); user-select:none; }
+      .big-price:active { cursor:grabbing; }
+      .big-price .bp-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .big-price .bp-sym { font-size:12px; font-weight:700; color:var(--fg); letter-spacing:.3px; }
+      .big-price .bp-x { background:none; border:0; color:var(--muted); font-size:14px; line-height:1; padding:0 2px; }
+      .big-price .bp-x:hover { color:var(--down); }
+      .big-price .bp-main { font-size:30px; font-weight:700; line-height:1.1; font-variant-numeric:tabular-nums; color:var(--fg); }
+      .big-price.up .bp-main { color:var(--up); }
+      .big-price.down .bp-main { color:var(--down); }
+      .big-price .bp-side { display:flex; gap:14px; font-size:11px; color:var(--fg); font-variant-numeric:tabular-nums; margin-top:2px; }
+      .big-price .bp-side .bp-k { color:var(--muted); text-transform:uppercase; font-size:9px; letter-spacing:.4px; margin-right:3px; }
+
+      /* Log/linear price-scale toggle (Item 7) — bottom-right corner of the chart. */
+      /* touch-action:manipulation is load-bearing on mobile: this button sits OVER the
+         lightweight-charts pane, whose touch handlers (+ the drawing layer's pane-level
+         pointerdown) otherwise claim the tap as a pan/draw gesture so the click never
+         synthesises. `manipulation` tells the browser this element owns its taps. */
+      .scale-toggle { position:absolute; right:6px; bottom:6px; z-index:5; background:var(--chart-loading-bg);
+        border:1px solid var(--line2); color:var(--muted); border-radius:5px; font-size:10px; font-weight:600;
+        text-transform:uppercase; letter-spacing:.5px; padding:3px 7px; cursor:pointer; touch-action:manipulation; }
+      .scale-toggle:hover { color:var(--fg); border-color:var(--line-hover); }
+      /* On the mobile Charts view nest the log/linear toggle in the chart's bottom-right
+         GUTTER CORNER — the dead intersection where the right price-axis gutter meets the
+         bottom time-axis gutter, below the lowest price label, just above the 46px one-tap
+         trade band (which sits BELOW the chart, not over it — measured: chart-main bottom ==
+         band top, so a small `bottom` puts the pill right at the corner, #25). Earlier the
+         +46px assumed the band overlaid the chart and floated the pill up over a price label.
+         z-index:7 keeps it above the drawing canvas (z3) + dismiss scrim (z5) so a tap lands
+         on it (#21), while staying BELOW the non-chart .m-overlay (z8) + TF radial backdrop
+         (z9) so it never pokes through them (#23). */
+      #mt5[data-tier="mobile"] .scale-toggle { bottom:3px; right:5px; padding:6px 11px; font-size:12px; z-index:7; }
+      /* …and the always-mounted chart carries the toggle even when another view is on top, so
+         show it ONLY on the Charts view, and NOT while the TF radial dial is open (z9 — they'd
+         fight for the same corner). Hidden on Quotes/Trade/History + during TF selection (#23). */
+      #mt5[data-tier="mobile"]:not([data-mview="chart"]) .scale-toggle,
+      #mt5[data-tier="mobile"][data-tfopen="1"] .scale-toggle { display:none; }
+      .chart { position:absolute; inset:0; }
+      /* z-index above lightweight-charts' own canvases (they set z-index) + a solid ground, so the
+         empty pane's bare axes never show through the card (the phone first-run showed a blank
+         chart with a dark right-hand column instead of this card, 2026-09-18). */
+      .chart-empty { position:absolute; inset:0; z-index:4; display:flex; align-items:center; justify-content:center;
+        pointer-events:none; background:var(--bg); padding:0 20px; text-align:center; }
+      .chart-empty-card { text-align:center; } .chart-empty-card h3 { margin:0 0 6px; font-weight:600; }
+      /* the empty-chart connect CTA — .chart-empty is pointer-events:none, so re-enable the button */
+      .chart-empty-cta { pointer-events:auto; margin-top:14px; }
+      #mt5[data-tier="mobile"] .chart-empty-cta { min-height:46px; padding:0 18px; font-size:14px; }
+      .chart-loading { position:absolute; top:10px; right:14px; z-index:5; display:flex; align-items:center; gap:7px; padding:5px 11px; background:var(--chart-loading-bg); border:1px solid var(--line2); border-radius:6px; color:var(--fg); font-size:11px; pointer-events:none; }
+      .chart-loading .spinner { width:11px; height:11px; border:2px solid var(--line2); border-top-color:var(--accent); border-radius:50%; animation:cl-spin .7s linear infinite; }
+      @keyframes cl-spin { to { transform:rotate(360deg); } }
+
+      /* Chart tabs (multi-symbol, pinnable) — a TradingView-style strip atop the chart
+         area; the right end carries the chart maximize/restore toggle. */
+      .chart-tabs { display:flex; align-items:stretch; height:30px; flex:none;
+        background:var(--panel); border-bottom:1px solid var(--line); }
+      .chart-tabs-scroll { display:flex; align-items:stretch; overflow-x:auto; flex:1; min-width:0; }
+      .ctab { display:flex; align-items:center; gap:6px; padding:0 9px; border-right:1px solid var(--line);
+        color:var(--muted); cursor:pointer; white-space:nowrap; font-size:11.5px; max-width:210px;
+        touch-action:pan-x; /* horizontal swipe scrolls the strip; a vertical drag docks the tab (touch) */ }
+      .ctab:hover { background:var(--hover); }
+      .ctab.on { color:var(--fg); background:var(--bg); box-shadow:inset 0 -2px 0 var(--accent); }
+      .ctab-sym { font-weight:600; overflow:hidden; text-overflow:ellipsis; }
+      /* On-canvas indicator (multi-chart layout): filled = tab is shown as a pane, hollow =
+         strip-only (drag it onto a chart to show it). */
+      .ctab-dot { flex:none; width:6px; height:6px; border-radius:50%; border:1px solid var(--muted); box-sizing:border-box; }
+      .ctab.shown .ctab-dot { background:var(--accent); border-color:var(--accent); }
+      .ctab-tf { color:var(--muted); font-size:10px; }
+      .ctab.on .ctab-tf { color:var(--accent); }
+      .ctab-pin { background:none; border:0; color:var(--muted); font-size:11px; line-height:1; padding:0; }
+      .ctab.pinned .ctab-pin, .ctab-pin:hover { color:var(--gold); }
+      .ctab-x { background:none; border:0; color:var(--muted); font-size:13px; line-height:1; padding:0 2px; visibility:hidden; }
+      .ctab:hover .ctab-x, .ctab.on .ctab-x { visibility:visible; }
+      .ctab-x:hover { color:var(--down); }
+      .ctab-max { flex:none; background:none; border:0; border-left:1px solid var(--line); color:var(--muted);
+        font-size:14px; padding:0 11px; }
+      .ctab-max:hover { color:var(--fg); background:var(--hover); }
+      .ctab-add { flex:none; align-self:center; background:none; border:0; color:var(--muted); font-size:13px; line-height:1; padding:0 11px; }
+      .ctab-add:hover { color:var(--accent); }
+
+      /* Chart-tabs layout switcher (single / side-by-side / stacked / grid) */
+      .ctab-layout { display:flex; align-items:stretch; flex:none; border-left:1px solid var(--line); }
+      .ctab-lay { background:none; border:0; color:var(--muted); font-size:13px; padding:0 7px; }
+      .ctab-lay:hover { color:var(--fg); background:var(--hover); }
+      .ctab-lay.on { color:var(--accent); }
+
+      /* Multi-chart grid (responsive; cells shrink to fit ANY count — no cap, no scroll) */
+      .chart-grid { position:relative; flex:1 1 0; min-width:0; min-height:0; display:grid; gap:1px; background:var(--line); }
+      .chart-cell { position:relative; display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--bg); overflow:hidden; }
+      .chart-cell.active { box-shadow:inset 0 0 0 1px var(--accent); }
+      .chart-cell-head { flex:none; display:flex; align-items:center; gap:7px; height:22px; padding:0 8px;
+        background:var(--panel); border-bottom:1px solid var(--line); font-size:11px; cursor:pointer; white-space:nowrap;
+        touch-action:none; /* a finger DRAG docks the chart (custom pointer-drag) instead of scrolling */ }
+      .chart-cell.active .chart-cell-head { background:var(--panel2); }
+      .chart-cell-sym { font-weight:700; color:var(--fg); }
+      .chart-cell-tf { color:var(--accent); font-size:10px; }
+      .chart-cell-max { margin-left:auto; background:none; border:0; color:var(--muted); font-size:12px; line-height:1; padding:0 3px; }
+      .chart-cell-max:hover { color:var(--fg); }
+      .chart-cell-x { background:none; border:0; color:var(--muted); font-size:13px; line-height:1; padding:0 2px; }
+      .chart-cell-x:hover { color:var(--down); }
+      /* A chart maximized over the grid (the layout is preserved underneath). */
+      .chart-cell-body { position:relative; flex:1 1 0; min-width:0; min-height:0; display:flex; }
+      /* Draggable grid gutters — resize the columns/rows into custom proportions. */
+      .grid-gutter { position:absolute; z-index:6; }
+      .grid-gutter-col { top:0; bottom:0; width:8px; margin-left:-4px; cursor:col-resize; }
+      .grid-gutter-row { left:0; right:0; height:8px; margin-top:-4px; cursor:row-resize; }
+      .grid-gutter:hover { background:var(--accent); opacity:.45; }
+
+      /* Left sidebar split (Market Watch ↕ Accounts) + panel actions/maximize */
+      .left-pane { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+      .left-split { flex:none; height:5px; cursor:row-resize; background:var(--line); }
+      /* resize handles: a finger drag resizes (touch-action:none stops the browser scrolling/zooming) */
+      .left-split, .vsplit, .hsplit, .grid-gutter { touch-action:none; }
+      .left-split:hover { background:var(--accent); }
+      .panel-h-actions { display:flex; align-items:center; gap:4px; }
+      .panel-max { position:absolute; z-index:7; background:var(--panel2); border:1px solid var(--line2);
+        color:var(--muted); border-radius:5px; font-size:13px; line-height:1; padding:3px 7px; }
+      .panel-max:hover { color:var(--fg); border-color:var(--line-hover); }
+      .toolbox-max { top:5px; right:10px; }
+
+      /* Drawing engine (area G) — the overlay canvas + the left tool toolbar (with a
+         style row) + the object-manager panel. The canvas sits above the chart but its
+         pointer-events are toggled in JS so the chart still scrolls/zooms when idle.
+         Everything is theme-aware (CSS vars) so it re-skins with the terminal theme. */
+      .drawing-overlay { position:absolute; inset:0; z-index:3; }
+
+      /* Left vertical tool toolbar */
+      .dtb { position:absolute; top:50%; left:8px; transform:translateY(-50%); z-index:6;
+        display:flex; flex-direction:column; align-items:center; gap:2px; padding:5px 4px;
+        background:var(--panel); border:1px solid var(--line2); border-radius:9px;
+        box-shadow:0 4px 16px rgba(0,0,0,.35); max-height:calc(100% - 24px); overflow-y:auto; overflow-x:visible; }
+      /* Mobile selection toolbar (#9): a floating Edit / Delete / Deselect bar shown at the
+         top of the pane when a drawing is selected (mobile has no right-click / Delete key). */
+      .draw-seltools { position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:8;
+        display:flex; gap:4px; padding:4px; background:var(--panel); border:1px solid var(--line2);
+        border-radius:9px; box-shadow:0 4px 16px rgba(0,0,0,.4); }
+      .draw-seltool { display:inline-flex; align-items:center; gap:5px; min-height:36px; padding:0 12px;
+        background:transparent; border:1px solid transparent; border-radius:7px; color:var(--fg);
+        font-size:13px; font-weight:600; white-space:nowrap; cursor:pointer; touch-action:manipulation; }
+      .draw-seltool:active { background:var(--hover); }
+      .draw-seltool-danger { color:var(--down); }
+      /* touch tiers: 44px drawing-tool buttons + selection tools (the June pass left them at desktop size) */
+      #mt5[data-tier="mobile"] .dtb-btn, #mt5[data-tier="tablet"] .dtb-btn { width:44px; height:44px; font-size:18px; border-radius:8px; }
+      #mt5[data-tier="mobile"] .dtb, #mt5[data-tier="tablet"] .dtb { gap:4px; padding:6px 5px; }
+      #mt5[data-tier="mobile"] .dtb-sep, #mt5[data-tier="tablet"] .dtb-sep { width:28px; }
+      #mt5[data-tier="mobile"] .draw-seltool, #mt5[data-tier="tablet"] .draw-seltool { min-height:44px; padding:0 14px; font-size:14px; }
+      .dtb-group { display:flex; flex-direction:column; align-items:center; gap:2px; }
+      .dtb-sep { width:20px; height:1px; background:var(--line); margin:3px 0; flex:none; }
+      .dtb-btn { position:relative; width:28px; height:28px; display:flex; align-items:center; justify-content:center;
+        background:transparent; border:1px solid transparent; border-radius:6px; color:var(--muted); cursor:pointer;
+        font-size:14px; line-height:1; padding:0; }
+      .dtb-btn:hover:not(:disabled) { background:var(--hover); color:var(--fg); border-color:var(--line2); }
+      .dtb-btn.on { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+      .dtb-btn:disabled { opacity:.35; cursor:default; }
+      .dtb-ico { font-size:13px; font-weight:600; pointer-events:none; }
+
+      /* Style row (colour / width / line-style / fill) — drops out beneath the bar */
+      .dtb-style { display:flex; flex-direction:column; align-items:center; gap:5px; margin-top:4px; padding-top:5px;
+        border-top:1px solid var(--line); width:100%; }
+      .dtb-swatches { display:grid; grid-template-columns:repeat(4, 12px); gap:3px; justify-content:center; }
+      .dtb-swatch { width:12px; height:12px; border-radius:3px; border:1px solid var(--line2); cursor:pointer; padding:0; }
+      .dtb-swatch.on { outline:2px solid var(--fg); outline-offset:1px; }
+      .dtb-swatch-custom { position:relative; overflow:hidden; display:flex; align-items:center; justify-content:center;
+        background:conic-gradient(from 0deg, #f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00); }
+      .dtb-swatch-custom input { position:absolute; inset:-4px; opacity:0; cursor:pointer; }
+      .dtb-widths, .dtb-linestyles { display:flex; gap:3px; justify-content:center; }
+      .dtb-w { width:18px; height:18px; display:flex; align-items:center; justify-content:center; background:var(--hover);
+        border:1px solid var(--line2); border-radius:4px; cursor:pointer; padding:0; }
+      .dtb-w.on { border-color:var(--accent); background:var(--sel); }
+      .dtb-w-bar { width:12px; background:var(--fg); border-radius:2px; display:block; }
+      .dtb-ls { min-width:24px; height:18px; font-size:9px; letter-spacing:-1px; color:var(--muted); background:var(--hover);
+        border:1px solid var(--line2); border-radius:4px; cursor:pointer; padding:0 2px; }
+      .dtb-ls.on { border-color:var(--accent); background:var(--sel); color:var(--fg); }
+      .dtb-fill { display:flex; align-items:center; gap:4px; font-size:10px; color:var(--muted); cursor:pointer; }
+      .dtb-fill input { margin:0; }
+
+      /* Object-manager panel (the chart's drawing list) */
+      .omp { position:absolute; top:10px; right:14px; z-index:6; width:210px; max-height:calc(100% - 24px);
+        display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--line2); border-radius:9px;
+        box-shadow:0 4px 16px rgba(0,0,0,.35); overflow:hidden; font-size:12px; }
+      .omp-head { display:flex; align-items:center; justify-content:space-between; padding:7px 10px;
+        border-bottom:1px solid var(--line); font-weight:600; color:var(--fg); }
+      .omp-x { background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 4px; border-radius:4px; }
+      .omp-x:hover { background:var(--hover); color:var(--fg); }
+      .omp-empty { padding:14px 12px; color:var(--muted); text-align:center; }
+      .omp-list { list-style:none; margin:0; padding:4px; overflow-y:auto; }
+      .omp-row { display:flex; align-items:center; gap:7px; padding:5px 7px; border-radius:6px; cursor:pointer; color:var(--fg); }
+      .omp-row:hover { background:var(--hover); }
+      .omp-row.on { background:var(--sel); }
+      .omp-row.hidden .omp-label { opacity:.45; text-decoration:line-through; }
+      .omp-ico { width:24px; text-align:center; font-weight:600; font-size:11px; flex:none; }
+      .omp-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .omp-edit { flex:1; min-width:0; background:var(--bg); border:1px solid var(--accent); color:var(--fg); border-radius:4px; padding:2px 5px; font-size:12px; }
+      .omp-actions { display:flex; gap:1px; flex:none; }
+      .omp-act { background:transparent; border:none; cursor:pointer; font-size:11px; padding:2px 3px; border-radius:4px; opacity:.7; }
+      .omp-act:hover:not(:disabled) { background:var(--line); opacity:1; }
+      .omp-act:disabled { opacity:.3; cursor:default; }
+
+      /* Toolbox */
+      .toolbox-area { grid-area:toolbox; background:var(--panel); border-top:1px solid var(--line); min-height:0; position:relative; }
+      .hsplit { position:absolute; top:-2px; left:0; right:0; height:6px; cursor:row-resize; z-index:6; }
+      .hsplit:hover { background:var(--accent); }
+      .toolbox { display:flex; flex-direction:column; height:100%; }
+      /* Tab strip scrolls horizontally (hidden scrollbar) rather than clipping its
+         right-most tabs off the edge at narrow widths. */
+      .tb-tabs { display:flex; gap:2px; padding:5px 8px 0; border-bottom:1px solid var(--line); flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
+      .tb-tabs::-webkit-scrollbar { display:none; }
+      .tb-tab { flex:none; white-space:nowrap; background:transparent; border:0; border-bottom:2px solid transparent; color:var(--muted); padding:6px 12px; font-size:12px; }
+      .tb-tab.on { color:var(--fg); border-bottom-color:var(--accent); }
+      .tb-body { flex:1; overflow:auto; min-height:0; }
+      .tb-acct { display:flex; flex-wrap:wrap; gap:18px; padding:9px 12px; border-bottom:1px solid var(--line); }
+      .stat { display:flex; flex-direction:column; gap:1px; }
+      .stat-k { color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; }
+      .stat-v { font-variant-numeric:tabular-nums; font-weight:600; font-size:13px; }
+      .tb-table { width:100%; border-collapse:collapse; }
+      .tb-table th { text-align:left; color:var(--muted); font-weight:500; font-size:10.5px; padding:5px 10px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); }
+      .tb-table th.num { text-align:right; }
+      .tb-table td { padding:5px 10px; border-bottom:1px solid var(--row-line); }
+      .tb-table td.x { width:24px; text-align:center; }
+      /* row actions (Modify ✎ + Close/Cancel ×) + the "Pending orders" sub-header */
+      .tb-table td.tb-rowacts { width:auto; white-space:nowrap; text-align:right; }
+      .tb-table .tb-rowacts .rm { margin-left:2px; }
+      .tb-table .tb-subhead { color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
+        font-size:10px; font-weight:600; padding-top:12px; background:var(--panel); }
+      /* History tab: Positions / Orders / Deals sub-tabs (left) + the time-range filter (right). */
+      .tb-hist { display:flex; flex-direction:column; min-height:0; }
+      .tb-hist-bar { display:flex; align-items:center; justify-content:space-between; gap:10px;
+        flex-wrap:wrap; padding:6px 10px; border-bottom:1px solid var(--line); background:var(--panel); }
+      .tb-hist-tabs { display:flex; gap:2px; }
+      .tb-hist-tabs button { background:transparent; border:0; border-bottom:2px solid transparent;
+        color:var(--muted); padding:4px 12px; font-size:11.5px; cursor:pointer; }
+      .tb-hist-tabs button.on { color:var(--fg); border-bottom-color:var(--accent); }
+      .tb-hist-right { display:flex; align-items:center; gap:12px; }
+      .tb-hist-total { font-size:11.5px; color:var(--muted); }
+      .tb-period { background:var(--panel); color:var(--fg); border:1px solid var(--line);
+        border-radius:5px; padding:4px 8px; font-size:11.5px; cursor:pointer; }
+      .tb-hist-empty { padding:14px 12px; }
+      .journal { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; color:var(--muted); white-space:pre-wrap; padding:8px 12px; }
+
+      /* Settings dialog */
+      .settings-dialog { width:440px; background:var(--panel); border:1px solid var(--line2); border-radius:12px; box-shadow:0 16px 48px var(--shadow); }
+      .settings-dialog .panel-h { border-radius:12px 12px 0 0; font-size:12px; }
+      .settings-body { padding:6px 16px 16px; }
+      .settings-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:13px 0; border-bottom:1px solid var(--line); }
+      .settings-row:last-child { border-bottom:0; }
+      .settings-label { font-size:13px; font-weight:600; margin-bottom:2px; }
+
+      /* Order dialog */
+      .modal-backdrop { position:fixed; inset:0; background:var(--backdrop); display:flex; align-items:center; justify-content:center; z-index:50; }
+      .order-dialog { width:330px; background:var(--panel); border:1px solid var(--line2); border-radius:12px; padding:0 0 16px; box-shadow:0 16px 48px var(--shadow); }
+      .order-dialog .panel-h { border-radius:12px 12px 0 0; font-size:12px; }
+      .order-dialog label { display:block; color:var(--muted); font-size:11px; margin:10px 16px 4px; }
+      .order-dialog select, .order-dialog > input { width:calc(100% - 32px); margin:0 16px; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:7px; padding:8px 10px; font-size:13px; }
+      /* mobile: the symbol field is a button → a searchable picker (Item 7) */
+      .order-dialog .ord-sym-btn { width:calc(100% - 32px); margin:0 16px; background:var(--panel2);
+        border:1px solid var(--line); color:var(--fg); border-radius:7px; padding:8px 10px; font-size:15px;
+        display:flex; align-items:center; justify-content:space-between; min-height:44px; }
+      .order-dialog .ord-sym-caret { color:var(--muted); }
+      .order-dialog .row { display:flex; gap:8px; margin:0 16px; }
+      .order-dialog .row > div { flex:1; } .order-dialog .row label { margin-left:0; } .order-dialog .row input { width:100%; margin:0; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:7px; padding:8px 10px; }
+      .vol { display:flex; gap:6px; margin:0 16px; }
+      .vol input { flex:1; text-align:center; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:7px; padding:8px; font-size:14px; font-weight:600; }
+      .stepbtn { width:38px; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:7px; font-size:18px; }
+      /* New-Order live tick sparkline (#7): a short, tightly-autoscaled mini chart. */
+      /* New-Order live tick mini-chart (#7/#16/#20): continuous height set inline; the grip
+         below the chart drag-resizes it. */
+      .micro-tick-head { display:flex; align-items:center; justify-content:space-between; margin:6px 16px 3px; }
+      .micro-tick-title { color:var(--muted); font-size:11px; }
+      .micro-tick-wrap { position:relative; margin:0 16px 0; border:1px solid var(--line);
+        border-radius:8px 8px 0 0; border-bottom:0; background:var(--panel2); overflow:hidden; }
+      /* drag-to-resize grip — the chart's draggable bottom edge (no sm/md/lg presets, #20). */
+      .micro-tick-resize { display:flex; align-items:center; justify-content:center; height:15px;
+        margin:0 16px 4px; border:1px solid var(--line); border-top:0; border-radius:0 0 8px 8px;
+        background:var(--panel2); cursor:ns-resize; touch-action:none; }
+      .micro-tick-grip { width:34px; height:4px; border-radius:2px; background:var(--line2); transition:background .12s, width .12s; }
+      .micro-tick-resize:hover .micro-tick-grip { background:var(--muted); width:42px; }
+      .micro-tick-resize:active .micro-tick-grip { background:var(--accent); width:42px; }
+      .micro-tick { display:block; width:100%; height:100%; }
+      .micro-tick-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+        color:var(--muted); font-size:11px; pointer-events:none; }
+      .ord-types { display:flex; gap:6px; margin:0 16px; }
+      .ord-types .ord-type { flex:1; background:var(--panel2); border:1px solid var(--line); color:var(--muted); border-radius:7px; padding:7px 6px; font-size:12px; font-weight:600; cursor:pointer; }
+      .ord-types .ord-type.active { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+      .order-btns { display:flex; gap:8px; margin:16px 16px 0; }
+      .order-btns button { flex:1; border:0; border-radius:8px; padding:10px; color:var(--on-accent); display:flex; flex-direction:column; align-items:center; gap:2px; font-weight:600; }
+      .order-btns .sell { background:var(--down); } .order-btns .buy { background:var(--up); }
+      .order-btns b { font-size:14px; font-variant-numeric:tabular-nums; }
+      /* Modify dialog (reuses .order-dialog / .modal-backdrop / .order-btns) */
+      .modify-sum { margin:2px 16px 0; font-size:14px; }
+      .order-btns .modify-go { background:var(--accent); }
+
+      /* ── Theme: switcher control ── */
+      .theme-select { background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+        border-radius:6px; padding:4px 6px; font-size:11px; font-family:inherit; }
+      .theme-select:hover { border-color:var(--line-hover); }
+      .theme-select:focus { outline:none; border-color:var(--accent); }
+      .settings-row .theme-select { padding:6px 8px; font-size:12px; }
+
+      /* ── Theme: retro SNES / NES pixel skins (8-bit / 16-bit) ──
+         Toggled by a `.theme-8bit` / `.theme-16bit` class the ThemeProvider sets on
+         <body>. The @font-face for "Press Start 2P" (bundled OFL data-URL) is injected
+         lazily by the ThemeProvider only when a skin is active — so the ~150KB payload
+         never loads for the normal themes. The font stack falls back to a monospace
+         family so layout is never broken even before the face is registered.
+         These rules only touch chrome (font/borders/rendering); they read the same
+         tokens, so the palette comes from the active theme above. */
+      body.theme-8bit, body.theme-16bit {
+        --skin-font: 'Press Start 2P', 'Courier New', ui-monospace, monospace;
+        --skin-border-width: 2px;
+      }
+      /* Pixel font is dense per-glyph: shrink the base size, widen line-height, kill
+         antialias smoothing, and pixelate the canvas so it reads as a CRT. */
+      body.theme-8bit, body.theme-16bit,
+      body.theme-8bit .toolbar, body.theme-16bit .toolbar {
+        font-family: var(--skin-font);
+        -webkit-font-smoothing: none;
+        font-smooth: never;
+        letter-spacing: 0;
+      }
+      body.theme-8bit, body.theme-16bit { font-size: 10px; line-height: 1.7; }
+      /* Apply the pixel font to the controls that set their own font/size, and bump
+         line-heights so the taller glyphs don't clip in dense rows. */
+      body.theme-8bit button, body.theme-16bit button,
+      body.theme-8bit input, body.theme-16bit input,
+      body.theme-8bit select, body.theme-16bit select,
+      body.theme-8bit .logo, body.theme-16bit .logo,
+      body.theme-8bit .active-sym, body.theme-16bit .active-sym,
+      body.theme-8bit .stat-v, body.theme-16bit .stat-v,
+      body.theme-8bit .mw-table, body.theme-16bit .mw-table,
+      body.theme-8bit .tb-table, body.theme-16bit .tb-table,
+      body.theme-8bit .tree, body.theme-16bit .tree {
+        font-family: var(--skin-font);
+      }
+      /* Smaller pixel type where the UI is information-dense, so the grid still fits
+         at the 1040px min width without horizontal overflow. */
+      body.theme-8bit .mw-table th, body.theme-16bit .mw-table th,
+      body.theme-8bit .mw-table td, body.theme-16bit .mw-table td,
+      body.theme-8bit .tb-table th, body.theme-16bit .tb-table th,
+      body.theme-8bit .tb-table td, body.theme-16bit .tb-table td,
+      body.theme-8bit .tf, body.theme-16bit .tf,
+      body.theme-8bit .stat-k, body.theme-16bit .stat-k,
+      body.theme-8bit .tab, body.theme-16bit .tab,
+      body.theme-8bit .tree-dir, body.theme-16bit .tree-dir,
+      body.theme-8bit .tree-file, body.theme-16bit .tree-file {
+        font-size: 8px; line-height: 1.9;
+      }
+      /* Chunky pixel borders on the main chrome surfaces. */
+      body.theme-8bit .toolbar, body.theme-16bit .toolbar,
+      body.theme-8bit .left, body.theme-16bit .left,
+      body.theme-8bit .toolbox-area, body.theme-16bit .toolbox-area {
+        border-width: var(--skin-border-width);
+      }
+      body.theme-8bit .tf.on, body.theme-16bit .tf.on,
+      body.theme-8bit .neworder, body.theme-16bit .neworder,
+      body.theme-8bit .primary, body.theme-16bit .primary,
+      body.theme-8bit .ebtn, body.theme-16bit .ebtn,
+      body.theme-8bit .mw-tab, body.theme-16bit .mw-tab {
+        border-width: var(--skin-border-width); border-style: solid;
+        border-radius: 0; /* square pixel corners */
+      }
+      /* Square the rounded chrome for a blocky retro feel. */
+      body.theme-8bit .login .card, body.theme-16bit .login .card,
+      body.theme-8bit .settings-dialog, body.theme-16bit .settings-dialog,
+      body.theme-8bit .order-dialog, body.theme-16bit .order-dialog,
+      body.theme-8bit .connecting-pill, body.theme-16bit .connecting-pill {
+        border-radius: 0; border-width: var(--skin-border-width);
+      }
+      /* Pixelate the chart canvas so candles render with crisp retro edges. */
+      body.theme-8bit .chart canvas, body.theme-16bit .chart canvas,
+      body.theme-8bit .equity-chart canvas, body.theme-16bit .equity-chart canvas {
+        image-rendering: pixelated;
+      }
+
+      /* ── Theme: CRT / scanline overlay ──
+         A full-viewport, NON-interactive (`pointer-events:none`) layer the
+         ThemeProvider creates once and shows for CRT skins. It NEVER captures input
+         and is `position:fixed` so it can't affect layout or hit-testing. Scanlines +
+         a soft vignette give the retro tube look without touching any other element. */
+      .crt-overlay {
+        position: fixed; inset: 0; z-index: 9999; pointer-events: none; display: none;
+        background:
+          repeating-linear-gradient(
+            to bottom,
+            rgba(0,0,0,0.16) 0px,
+            rgba(0,0,0,0.16) 1px,
+            rgba(0,0,0,0) 2px,
+            rgba(0,0,0,0) 3px
+          ),
+          radial-gradient(ellipse at center, rgba(0,0,0,0) 62%, rgba(0,0,0,0.28) 100%);
+        mix-blend-mode: multiply;
+      }
+      /* A subtle flicker — disabled for users who prefer reduced motion. */
+      @keyframes crt-flicker { 0%,100% { opacity:0.92; } 50% { opacity:1; } }
+      .crt-overlay { animation: crt-flicker 5s ease-in-out infinite; }
+      @media (prefers-reduced-motion: reduce) { .crt-overlay { animation: none; } }
+
+      /* Matrix theme: the digital-rain backdrop is a fixed z-index:0 <canvas> the
+         ThemeProvider mounts on <body>. #root sits above it (z-index:1) but transparent,
+         so the rain glows through the theme's translucent panels (the chart stays opaque). */
+      body.theme-matrix #root { background: transparent; position: relative; z-index: 1; }
+
+      /* ── Theme: OLD SCHOOL DARK = WINDOWS 95/98 (structural, not just colour) ──
+         A real beveled Win95 trading app: gray 3D bevels (raised chrome / sunken inputs)
+         via inset box-shadows (light top-left, dark bottom-right — non-layout-affecting),
+         square corners, no soft shadows, a Tahoma/MS-Sans bitmap font, navy title bar. */
+      body.theme-oldschooldark {
+        --w95-raised: inset 1px 1px 0 #9a9a9a, inset -1px -1px 0 #000000, inset 2px 2px 0 #606060, inset -2px -2px 0 #181818;
+        --w95-sunken: inset 1px 1px 0 #000000, inset -1px -1px 0 #9a9a9a, inset 2px 2px 0 #181818, inset -2px -2px 0 #606060;
+        --w95-font: 'Tahoma', 'MS Sans Serif', 'Segoe UI', Verdana, sans-serif;
+        font-size: 12px;
+      }
+      body.theme-oldschooldark,
+      body.theme-oldschooldark button, body.theme-oldschooldark input,
+      body.theme-oldschooldark select, body.theme-oldschooldark textarea,
+      body.theme-oldschooldark .mw-table, body.theme-oldschooldark .tb-table {
+        font-family: var(--w95-font); letter-spacing: 0;
+      }
+      /* No rounded corners + no blurred drop-shadows anywhere — Win95 depth is bevels only. */
+      body.theme-oldschooldark * { border-radius: 0 !important; }
+      /* Navy title bar (the toolbar doubles as the window title bar). */
+      body.theme-oldschooldark .toolbar {
+        background: linear-gradient(90deg, #0a246a 0%, #2a5fae 100%);
+        color: #fff; border: 0; box-shadow: var(--w95-raised);
+      }
+      body.theme-oldschooldark .toolbar .logo-word, body.theme-oldschooldark .toolbar .active-sym { color: #fff; }
+      /* Raised gray panels. */
+      body.theme-oldschooldark .left, body.theme-oldschooldark .toolbox-area,
+      body.theme-oldschooldark .mw, body.theme-oldschooldark .tb-acct,
+      body.theme-oldschooldark .settings-dialog, body.theme-oldschooldark .order-dialog,
+      body.theme-oldschooldark .modify-dialog, body.theme-oldschooldark .login .card {
+        background: var(--panel); border: 0 !important; box-shadow: var(--w95-raised);
+      }
+      /* Buttons/tabs: raised; pressed or "on" → sunken. box-shadow keeps their fill (so the
+         BUY/SELL colours survive) while adding the bevel — no layout shift. */
+      body.theme-oldschooldark button, body.theme-oldschooldark .tf,
+      body.theme-oldschooldark .primary, body.theme-oldschooldark .ebtn,
+      body.theme-oldschooldark .mw-tab, body.theme-oldschooldark .tb-tab,
+      body.theme-oldschooldark .neworder, body.theme-oldschooldark .danger,
+      body.theme-oldschooldark .linkbtn {
+        border: 0 !important; box-shadow: var(--w95-raised);
+      }
+      body.theme-oldschooldark button:active, body.theme-oldschooldark .tf:active,
+      body.theme-oldschooldark .tf.on, body.theme-oldschooldark .mw-tab.on,
+      body.theme-oldschooldark .tb-tab.on, body.theme-oldschooldark .primary:active {
+        box-shadow: var(--w95-sunken);
+      }
+      /* Inputs/selects: sunken wells. */
+      body.theme-oldschooldark input, body.theme-oldschooldark select, body.theme-oldschooldark textarea {
+        background: #1e1e1e; color: var(--fg); border: 0 !important; box-shadow: var(--w95-sunken);
+      }
+
+      /* ── Theme: NeXTSTEP (structural) ──
+         CHUNKY monochrome bevels (a 2-layer raised edge thicker than Win95's), light-gray window
+         chrome on a dark steel desktop, a beveled gray title bar with black caption, Helvetica,
+         square corners. */
+      body.theme-nextstep {
+        --nx-raised: inset 1px 1px 0 #ffffff, inset -1px -1px 0 #5a5a5a, inset 2px 2px 0 #d8d8d8, inset -2px -2px 0 #2e2e2e;
+        --nx-sunken: inset 1px 1px 0 #5a5a5a, inset -1px -1px 0 #ffffff, inset 2px 2px 0 #2e2e2e, inset -2px -2px 0 #d8d8d8;
+        --nx-font: 'Helvetica Neue', Helvetica, Arial, 'Nimbus Sans', sans-serif;
+      }
+      body.theme-nextstep,
+      body.theme-nextstep button, body.theme-nextstep input, body.theme-nextstep select, body.theme-nextstep textarea,
+      body.theme-nextstep .mw-table, body.theme-nextstep .tb-table { font-family: var(--nx-font); letter-spacing: 0; }
+      body.theme-nextstep * { border-radius: 0 !important; }
+      body.theme-nextstep .toolbar {
+        background: linear-gradient(180deg, #c2c2c2 0%, #a4a4a4 100%); color: #111; border: 0; box-shadow: var(--nx-raised);
+      }
+      body.theme-nextstep .toolbar .logo-word { color: #111; }
+      /* active-sym pill on a light var(--panel2) gray → DARK text (not white). */
+      body.theme-nextstep .toolbar .active-sym { color: #1a2236; }
+      body.theme-nextstep .left, body.theme-nextstep .toolbox-area, body.theme-nextstep .mw, body.theme-nextstep .tb-acct,
+      body.theme-nextstep .settings-dialog, body.theme-nextstep .order-dialog, body.theme-nextstep .modify-dialog, body.theme-nextstep .login .card {
+        background: var(--panel); border: 0 !important; box-shadow: var(--nx-raised);
+      }
+      body.theme-nextstep button, body.theme-nextstep .tf, body.theme-nextstep .primary, body.theme-nextstep .ebtn,
+      body.theme-nextstep .mw-tab, body.theme-nextstep .tb-tab, body.theme-nextstep .neworder, body.theme-nextstep .danger, body.theme-nextstep .linkbtn {
+        border: 0 !important; box-shadow: var(--nx-raised);
+      }
+      body.theme-nextstep button:active, body.theme-nextstep .tf:active, body.theme-nextstep .tf.on,
+      body.theme-nextstep .mw-tab.on, body.theme-nextstep .tb-tab.on, body.theme-nextstep .primary:active { box-shadow: var(--nx-sunken); }
+      body.theme-nextstep input, body.theme-nextstep select, body.theme-nextstep textarea {
+        background: #c8c8c8; color: #111; border: 0 !important; box-shadow: var(--nx-sunken);
+      }
+
+      /* ── Theme: CLASSIC MAC OS / PLATINUM (structural) ──
+         Mac OS 8/9: a gray PINSTRIPE title bar (horizontal hairlines), ROUNDED-RECT buttons with
+         a soft platinum bevel, the Mac selection blue. Softer + rounder than Win95 — clearly Apple. */
+      body.theme-platinum,
+      body.theme-platinum button, body.theme-platinum input, body.theme-platinum select,
+      body.theme-platinum .mw-table, body.theme-platinum .tb-table {
+        font-family: 'Charcoal', 'Geneva', 'Lucida Grande', 'Helvetica Neue', system-ui, sans-serif;
+      }
+      body.theme-platinum .toolbar {
+        background:
+          repeating-linear-gradient(180deg, rgba(0,0,0,0.05) 0px, rgba(0,0,0,0.05) 1px, rgba(255,255,255,0.55) 2px, rgba(255,255,255,0) 3px),
+          linear-gradient(180deg, #e6e6e6 0%, #cccccc 100%);
+        color: #1a1a1a; border: 0; border-bottom: 1px solid #808080;
+        box-shadow: inset 0 1px 0 #ffffff, inset 0 -1px 0 #b8b8b8;
+      }
+      body.theme-platinum .toolbar .logo-word { color: #1a1a1a; }
+      body.theme-platinum .left, body.theme-platinum .toolbox-area, body.theme-platinum .settings-dialog,
+      body.theme-platinum .order-dialog, body.theme-platinum .login .card {
+        background: var(--panel); border: 1px solid #9a9a9a; border-radius: 6px;
+        box-shadow: inset 0 1px 0 #ffffff, 0 1px 2px rgba(0,0,0,0.18);
+      }
+      body.theme-platinum button, body.theme-platinum .tf, body.theme-platinum .primary, body.theme-platinum .ebtn,
+      body.theme-platinum .mw-tab, body.theme-platinum .tb-tab, body.theme-platinum .neworder {
+        background: linear-gradient(180deg, #fbfbfb 0%, #e3e3e3 50%, #d2d2d2 100%);
+        color: #1a1a1a; border: 1px solid #8a8a8a; border-radius: 8px;
+        box-shadow: inset 0 1px 0 #ffffff, 0 1px 1px rgba(0,0,0,0.12);
+      }
+      body.theme-platinum button:hover, body.theme-platinum .tf:hover { border-color: #2f5fb3; }
+      body.theme-platinum button:active, body.theme-platinum .tf.on, body.theme-platinum .mw-tab.on, body.theme-platinum .tb-tab.on {
+        background: linear-gradient(180deg, #c2d0ee 0%, #aac0e8 100%); border-color: #2f5fb3; box-shadow: inset 0 1px 2px rgba(0,0,0,0.2);
+      }
+      body.theme-platinum input, body.theme-platinum select {
+        background: #ffffff; color: #1a1a1a; border: 1px solid #8a8a8a; border-radius: 5px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.14);
+      }
+
+      /* ── Theme: CLASSIC MAC OS DARK (structural) ── dark sibling of Platinum: a DARK gray
+         PINSTRIPE title bar, dark rounded-rect buttons with a soft bevel, the Mac selection blue. */
+      body.theme-platinumdark,
+      body.theme-platinumdark button, body.theme-platinumdark input, body.theme-platinumdark select,
+      body.theme-platinumdark .mw-table, body.theme-platinumdark .tb-table {
+        font-family: 'Charcoal', 'Geneva', 'Lucida Grande', 'Helvetica Neue', system-ui, sans-serif;
+      }
+      body.theme-platinumdark .toolbar {
+        background:
+          repeating-linear-gradient(180deg, rgba(255,255,255,0.06) 0px, rgba(255,255,255,0.06) 1px, rgba(0,0,0,0.12) 2px, rgba(0,0,0,0) 3px),
+          linear-gradient(180deg, #525252 0%, #3e3e3e 100%);
+        color: #ececec; border: 0; border-bottom: 1px solid #262626;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.3);
+      }
+      body.theme-platinumdark .toolbar .logo-word { color: #ececec; }
+      /* active-sym pill text (base = Mac blue on a dark panel2 → too low) → brighter blue. */
+      body.theme-platinumdark .toolbar .active-sym { color: #8fb8f0; }
+      body.theme-platinumdark .left, body.theme-platinumdark .toolbox-area, body.theme-platinumdark .settings-dialog,
+      body.theme-platinumdark .order-dialog, body.theme-platinumdark .login .card {
+        background: var(--panel); border: 1px solid #2a2a2a; border-radius: 6px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.4);
+      }
+      body.theme-platinumdark button, body.theme-platinumdark .tf, body.theme-platinumdark .primary, body.theme-platinumdark .ebtn,
+      body.theme-platinumdark .mw-tab, body.theme-platinumdark .tb-tab, body.theme-platinumdark .neworder {
+        background: linear-gradient(180deg, #5a5a5a 0%, #484848 50%, #3e3e3e 100%);
+        color: #ececec; border: 1px solid #2a2a2a; border-radius: 8px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 1px rgba(0,0,0,0.3);
+      }
+      body.theme-platinumdark button:hover, body.theme-platinumdark .tf:hover { border-color: #5a8cd8; }
+      body.theme-platinumdark button:active, body.theme-platinumdark .tf.on, body.theme-platinumdark .mw-tab.on, body.theme-platinumdark .tb-tab.on {
+        background: linear-gradient(180deg, #2f4a72 0%, #26405e 100%); border-color: #5a8cd8; box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
+      }
+      body.theme-platinumdark input, body.theme-platinumdark select {
+        background: #2e2e2e; color: #ececec; border: 1px solid #2a2a2a; border-radius: 5px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+      }
+      body.theme-platinumdark select option { background: #3e3e3e; color: #ececec; }
+
+      /* ── Theme: DOS AMBER TERMINAL (structural) ──
+         '90s amber-phosphor terminal: monospace bitmap font, an amber text-shadow GLOW,
+         double-line boxed borders, plus the crt:true scanlines (amber-tinted, faint). */
+      body.theme-dosamber,
+      body.theme-dosamber button, body.theme-dosamber input, body.theme-dosamber select,
+      body.theme-dosamber .mw-table, body.theme-dosamber .tb-table, body.theme-dosamber .tree {
+        font-family: 'Consolas', 'Lucida Console', 'Courier New', ui-monospace, monospace;
+        letter-spacing: 0.3px;
+      }
+      body.theme-dosamber { text-shadow: 0 0 2px rgba(255,176,0,0.45); }
+      body.theme-dosamber .toolbar, body.theme-dosamber .left, body.theme-dosamber .toolbox-area,
+      body.theme-dosamber .settings-dialog, body.theme-dosamber .order-dialog,
+      body.theme-dosamber .modify-dialog, body.theme-dosamber .login .card {
+        border-style: double; border-width: 3px; border-color: var(--line2); border-radius: 0;
+      }
+      body.theme-dosamber .crt-overlay {
+        background:
+          repeating-linear-gradient(to bottom, rgba(0,0,0,0.10) 0px, rgba(0,0,0,0.10) 1px, rgba(0,0,0,0) 2px, rgba(0,0,0,0) 3px),
+          radial-gradient(ellipse at center, rgba(255,140,0,0.03) 50%, rgba(0,0,0,0.30) 100%);
+        mix-blend-mode: multiply;
+      }
+
+      /* ── Skin: CRT-PIXEL (shared pixel-font skin; used by Green Phosphor) ──
+         Press Start 2P (lazily injected by the provider when a theme sets body:'crt-pixel'),
+         no font smoothing, square corners, pixelated chart canvas. Modeled on theme-8bit. */
+      body.crt-pixel { --skin-font: 'Press Start 2P', 'Courier New', ui-monospace, monospace; }
+      body.crt-pixel,
+      body.crt-pixel button, body.crt-pixel input, body.crt-pixel select,
+      body.crt-pixel .mw-table, body.crt-pixel .tb-table, body.crt-pixel .tree, body.crt-pixel .toolbar {
+        font-family: var(--skin-font); -webkit-font-smoothing: none; font-smooth: never; letter-spacing: 0;
+      }
+      body.crt-pixel { font-size: 10px; line-height: 1.7; }
+      body.crt-pixel .mw-table th, body.crt-pixel .mw-table td,
+      body.crt-pixel .tb-table th, body.crt-pixel .tb-table td,
+      body.crt-pixel .tf, body.crt-pixel .stat-k, body.crt-pixel .tab,
+      body.crt-pixel .tree-dir, body.crt-pixel .tree-file { font-size: 8px; line-height: 1.9; }
+      body.crt-pixel * { border-radius: 0 !important; }
+      body.crt-pixel .chart canvas, body.crt-pixel .equity-chart canvas { image-rendering: pixelated; }
+
+      /* ── Theme: GREEN-PHOSPHOR CRT (structural) ──
+         Heavy green text BLOOM + heavy green-tinted scanlines on top of the crt-pixel skin. */
+      body.theme-greencrt { text-shadow: 0 0 3px rgba(51,255,102,0.7), 0 0 7px rgba(51,255,102,0.35); }
+      body.theme-greencrt .crt-overlay {
+        background:
+          repeating-linear-gradient(to bottom, rgba(0,0,0,0.30) 0px, rgba(0,0,0,0.30) 1px, rgba(0,0,0,0) 2px, rgba(0,0,0,0) 4px),
+          radial-gradient(ellipse at center, rgba(0,255,80,0.05) 45%, rgba(0,0,0,0.45) 100%);
+        mix-blend-mode: multiply;
+      }
+
+      /* ── Theme: WINDOWS XP (LUNA) — bright CERULEAN glossy title bar (white shine band on
+         top, darker on bottom) + silver gradient buttons (subtly rounded, NOT pills) + an
+         amber hover glow + silver-blue panels. ── */
+      body.theme-winxp .toolbar {
+        background:
+          linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 9%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.14) 100%),
+          linear-gradient(180deg, #3f93f3 0%, #1d77ec 46%, #0b5cdf 54%, #0a50d4 100%);
+        color: #fff; border: 0; border-bottom: 1px solid #06348f;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+      }
+      body.theme-winxp .toolbar .logo-word { color: #fff; text-shadow: 0 1px 1px rgba(0,30,90,0.6); }
+      /* The active-sym is a PILL with a light var(--panel2) background — its text must stay DARK
+         (white-on-light-pill was unreadable). Only the logo word sits directly on the blue bar. */
+      body.theme-winxp .toolbar .active-sym { color: #0a3a8a; text-shadow: none; }
+      body.theme-winxp button, body.theme-winxp .tf, body.theme-winxp .primary, body.theme-winxp .ebtn,
+      body.theme-winxp .mw-tab, body.theme-winxp .tb-tab, body.theme-winxp .neworder {
+        background: linear-gradient(180deg, #fefefe 0%, #f1f4f9 46%, #dde6f1 50%, #e9eef6 92%, #f4f7fb 100%);
+        color: #0a1428; border: 1px solid #8aa9cc; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7);
+      }
+      body.theme-winxp button:hover, body.theme-winxp .tf:hover { border-color: #f0a000; box-shadow: inset 0 0 0 1px rgba(255,210,120,0.85), 0 0 5px rgba(255,170,0,0.5); }
+      body.theme-winxp button:active, body.theme-winxp .tf.on, body.theme-winxp .mw-tab.on, body.theme-winxp .tb-tab.on {
+        background: linear-gradient(180deg, #d2e0f4 0%, #bcd2f0 50%, #cadcf6 100%); box-shadow: inset 0 1px 3px rgba(0,40,120,0.3);
+      }
+      body.theme-winxp .left, body.theme-winxp .toolbox-area, body.theme-winxp .settings-dialog,
+      body.theme-winxp .order-dialog, body.theme-winxp .login .card {
+        background: linear-gradient(180deg, #f6f9fd 0%, #e8eef8 100%); border: 1px solid #97b3d6; border-radius: 4px;
+      }
+      body.theme-winxp input, body.theme-winxp select {
+        background: #fff; border: 1px solid #7b9ec5; border-radius: 2px; box-shadow: inset 0 1px 2px rgba(0,40,120,0.18);
+      }
+
+      /* ── Theme: WINDOWS 7 (AERO) — prominent frosted GLASS (heavy backdrop-blur, translucent),
+         glossy two-tone Aero buttons, soft blue glow on hover, rounded. ── */
+      body.theme-win7 .toolbar {
+        background: linear-gradient(180deg, rgba(244,250,255,0.72) 0%, rgba(208,228,248,0.6) 50%, rgba(190,218,245,0.58) 100%);
+        -webkit-backdrop-filter: blur(20px) saturate(1.3); backdrop-filter: blur(20px) saturate(1.3);
+        color: #15263f; border: 0; border-bottom: 1px solid rgba(110,150,205,0.55);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), inset 0 -1px 0 rgba(255,255,255,0.25);
+      }
+      /* active-sym pill text (base = light Aero accent on a light panel2 → too low) → deeper blue. */
+      body.theme-win7 .toolbar .active-sym { color: #0d5bb8; }
+      body.theme-win7 .left, body.theme-win7 .toolbox-area, body.theme-win7 .settings-dialog, body.theme-win7 .order-dialog {
+        background: rgba(234,243,253,0.58); -webkit-backdrop-filter: blur(22px) saturate(1.25); backdrop-filter: blur(22px) saturate(1.25);
+        border: 1px solid rgba(150,185,225,0.55); border-radius: 8px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+      }
+      body.theme-win7 button, body.theme-win7 .tf, body.theme-win7 .primary, body.theme-win7 .ebtn,
+      body.theme-win7 .mw-tab, body.theme-win7 .tb-tab, body.theme-win7 .neworder {
+        background: linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(238,247,255,0.9) 48%, rgba(206,228,250,0.9) 50%, rgba(224,239,253,0.95) 100%);
+        color: #15263f; border: 1px solid #94b8e2; border-radius: 5px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), 0 1px 3px rgba(40,110,200,0.18);
+      }
+      body.theme-win7 button:hover, body.theme-win7 .tf:hover { border-color: #5aa0ec; box-shadow: inset 0 1px 0 #fff, 0 0 9px rgba(70,150,250,0.55); }
+      body.theme-win7 .tf.on, body.theme-win7 .tb-tab.on, body.theme-win7 .mw-tab.on, body.theme-win7 button:active {
+        background: linear-gradient(180deg, rgba(180,212,248,0.95), rgba(146,194,244,0.96)); box-shadow: inset 0 1px 3px rgba(20,60,140,0.3);
+      }
+      body.theme-win7 input, body.theme-win7 select { background: rgba(255,255,255,0.9); border: 1px solid #94b8e2; border-radius: 4px; }
+
+      /* ── Theme: WINDOWS 11 (FLUENT) — dark MICA, GENEROUS rounded corners, soft shadows,
+         accent-fill active controls, accent underline on inputs, clean flat-with-depth. ── */
+      body.theme-win11 .toolbar {
+        background: rgba(32,32,32,0.78); -webkit-backdrop-filter: blur(40px) saturate(1.6); backdrop-filter: blur(40px) saturate(1.6);
+        color: #fff; border: 0; border-bottom: 1px solid rgba(255,255,255,0.07);
+      }
+      body.theme-win11 .left, body.theme-win11 .toolbox-area, body.theme-win11 .settings-dialog, body.theme-win11 .order-dialog {
+        background: rgba(40,40,40,0.66); -webkit-backdrop-filter: blur(50px) saturate(1.7); backdrop-filter: blur(50px) saturate(1.7);
+        border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; box-shadow: 0 10px 34px rgba(0,0,0,0.45);
+      }
+      body.theme-win11 button, body.theme-win11 .tf, body.theme-win11 .ebtn, body.theme-win11 .mw-tab, body.theme-win11 .tb-tab {
+        background: rgba(255,255,255,0.055); color: #fff; border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.25); padding: 5px 13px;
+      }
+      body.theme-win11 button:hover, body.theme-win11 .tf:hover { background: rgba(255,255,255,0.10); border-color: rgba(255,255,255,0.12); }
+      body.theme-win11 .tf.on, body.theme-win11 .tb-tab.on, body.theme-win11 .mw-tab.on, body.theme-win11 .primary {
+        background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600;
+      }
+      body.theme-win11 .primary { box-shadow: 0 2px 8px rgba(96,205,255,0.3); }
+      body.theme-win11 input, body.theme-win11 select {
+        background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; border-bottom: 2px solid var(--accent);
+      }
+      /* The dark Win11 select has a near-transparent-WHITE background; without this the native
+         <option> popup inherits it and renders white-text-on-white. Force solid dark options. */
+      body.theme-win11 select option { background: #2b2b2b; color: #ffffff; }
+
+      /* ── Theme: WINDOWS XP DARK (ROYALE NOIR) — graphite glossy title bar (top shine, darker
+         bottom) + dark metallic gradient buttons (rounded, NOT pills) + a blue hover glow +
+         dark slate panels. Dark sibling of theme-winxp. ── */
+      body.theme-winxpdark .toolbar {
+        background:
+          linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0) 9%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.28) 100%),
+          linear-gradient(180deg, #3a4658 0%, #2b3442 46%, #222a36 54%, #1c232e 100%);
+        color: #eaf0fa; border: 0; border-bottom: 1px solid #11161e;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+      }
+      body.theme-winxpdark .toolbar .logo-word { color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.6); }
+      body.theme-winxpdark button, body.theme-winxpdark .tf, body.theme-winxpdark .primary, body.theme-winxpdark .ebtn,
+      body.theme-winxpdark .mw-tab, body.theme-winxpdark .tb-tab, body.theme-winxpdark .neworder {
+        background: linear-gradient(180deg, #414b5a 0%, #333c49 46%, #2a323d 50%, #313a46 92%, #3a4452 100%);
+        color: #e7edf6; border: 1px solid #11161e; border-radius: 3px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+      }
+      body.theme-winxpdark button:hover, body.theme-winxpdark .tf:hover { border-color: #3a9bf0; box-shadow: inset 0 0 0 1px rgba(90,170,255,0.5), 0 0 6px rgba(58,155,240,0.45); }
+      body.theme-winxpdark button:active, body.theme-winxpdark .tf.on, body.theme-winxpdark .mw-tab.on, body.theme-winxpdark .tb-tab.on {
+        background: linear-gradient(180deg, #1d4a78 0%, #15395f 50%, #1a4470 100%); box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+      }
+      body.theme-winxpdark .left, body.theme-winxpdark .toolbox-area, body.theme-winxpdark .settings-dialog,
+      body.theme-winxpdark .order-dialog, body.theme-winxpdark .login .card {
+        background: linear-gradient(180deg, #2b3340 0%, #232a35 100%); border: 1px solid #11161e; border-radius: 4px;
+      }
+      body.theme-winxpdark input, body.theme-winxpdark select {
+        background: #181d25; color: var(--fg); border: 1px solid #11161e; border-radius: 2px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
+      }
+      body.theme-winxpdark select option { background: #232a35; color: #e7edf6; }
+
+      /* ── Theme: WINDOWS 7 DARK (AERO) — dark frosted GLASS (heavy backdrop-blur, translucent
+         dark chrome), glossy dark two-tone buttons, soft blue glow, rounded. Dark sibling of
+         theme-win7. ── */
+      body.theme-win7dark .toolbar {
+        background: linear-gradient(180deg, rgba(40,56,86,0.72) 0%, rgba(26,38,62,0.62) 50%, rgba(20,30,52,0.6) 100%);
+        -webkit-backdrop-filter: blur(20px) saturate(1.3); backdrop-filter: blur(20px) saturate(1.3);
+        color: #e6eefb; border: 0; border-bottom: 1px solid rgba(120,160,220,0.35);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.25);
+      }
+      body.theme-win7dark .left, body.theme-win7dark .toolbox-area, body.theme-win7dark .settings-dialog, body.theme-win7dark .order-dialog {
+        background: rgba(28,40,66,0.55); -webkit-backdrop-filter: blur(22px) saturate(1.25); backdrop-filter: blur(22px) saturate(1.25);
+        border: 1px solid rgba(90,130,190,0.4); border-radius: 8px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+      }
+      body.theme-win7dark button, body.theme-win7dark .tf, body.theme-win7dark .primary, body.theme-win7dark .ebtn,
+      body.theme-win7dark .mw-tab, body.theme-win7dark .tb-tab, body.theme-win7dark .neworder {
+        background: linear-gradient(180deg, rgba(70,92,130,0.95) 0%, rgba(48,66,100,0.9) 48%, rgba(36,52,84,0.9) 50%, rgba(44,62,96,0.95) 100%);
+        color: #e6eefb; border: 1px solid #2c456e; border-radius: 5px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 1px 3px rgba(0,0,0,0.3);
+      }
+      body.theme-win7dark button:hover, body.theme-win7dark .tf:hover { border-color: #4a9bf0; box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 0 9px rgba(60,150,250,0.5); }
+      body.theme-win7dark .tf.on, body.theme-win7dark .tb-tab.on, body.theme-win7dark .mw-tab.on, body.theme-win7dark button:active {
+        background: linear-gradient(180deg, rgba(40,90,150,0.95), rgba(28,68,120,0.96)); box-shadow: inset 0 1px 3px rgba(0,0,0,0.45);
+      }
+      body.theme-win7dark input, body.theme-win7dark select { background: rgba(16,24,42,0.85); color: var(--fg); border: 1px solid #2c456e; border-radius: 4px; }
+      body.theme-win7dark select option { background: #16203a; color: #e6eefb; }
+
+      /* ── Theme: WINDOWS 11 LIGHT (FLUENT) — light MICA: translucent near-white chrome, big
+         rounded corners, soft shadows, accent-fill active controls, accent underline on inputs.
+         Light sibling of theme-win11. ── */
+      body.theme-win11light .toolbar {
+        background: rgba(243,243,243,0.8); -webkit-backdrop-filter: blur(40px) saturate(1.4); backdrop-filter: blur(40px) saturate(1.4);
+        color: #1a1a1a; border: 0; border-bottom: 1px solid rgba(0,0,0,0.08);
+      }
+      body.theme-win11light .left, body.theme-win11light .toolbox-area, body.theme-win11light .settings-dialog, body.theme-win11light .order-dialog {
+        background: rgba(251,251,251,0.72); -webkit-backdrop-filter: blur(50px) saturate(1.5); backdrop-filter: blur(50px) saturate(1.5);
+        border: 1px solid rgba(0,0,0,0.07); border-radius: 14px; box-shadow: 0 10px 34px rgba(0,0,0,0.14);
+      }
+      body.theme-win11light button, body.theme-win11light .tf, body.theme-win11light .ebtn, body.theme-win11light .mw-tab, body.theme-win11light .tb-tab {
+        background: rgba(255,255,255,0.7); color: #1a1a1a; border: 1px solid rgba(0,0,0,0.1);
+        border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.08); padding: 5px 13px;
+      }
+      body.theme-win11light button:hover, body.theme-win11light .tf:hover { background: rgba(255,255,255,0.96); border-color: rgba(0,0,0,0.14); }
+      body.theme-win11light .tf.on, body.theme-win11light .tb-tab.on, body.theme-win11light .mw-tab.on, body.theme-win11light .primary {
+        background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600;
+      }
+      body.theme-win11light .primary { box-shadow: 0 2px 8px rgba(0,95,184,0.3); }
+      body.theme-win11light input, body.theme-win11light select {
+        background: rgba(255,255,255,0.85); border: 1px solid rgba(0,0,0,0.12); border-radius: 7px; border-bottom: 2px solid var(--accent);
+      }
+
+      /* ── Theme: macOS (modern, Big Sur/Sonoma — Dark + Light) — translucent VIBRANCY chrome
+         (backdrop-blur), big rounded corners, SF-Pro/system font, macOS systemBlue accent. The
+         MODERN mac look (distinct from the retro Classic Mac Platinum). ── */
+      body.theme-macosdark, body.theme-macoslight,
+      body.theme-macosdark button, body.theme-macoslight button,
+      body.theme-macosdark input, body.theme-macoslight input,
+      body.theme-macosdark select, body.theme-macoslight select,
+      body.theme-macosdark .mw-table, body.theme-macoslight .mw-table,
+      body.theme-macosdark .tb-table, body.theme-macoslight .tb-table {
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', 'Segoe UI', system-ui, sans-serif;
+      }
+      /* macOS DARK */
+      body.theme-macosdark .toolbar {
+        background: rgba(40,40,42,0.72); -webkit-backdrop-filter: blur(36px) saturate(1.7); backdrop-filter: blur(36px) saturate(1.7);
+        color: #f2f2f7; border: 0; border-bottom: 1px solid rgba(255,255,255,0.08);
+      }
+      body.theme-macosdark .left, body.theme-macosdark .toolbox-area, body.theme-macosdark .settings-dialog, body.theme-macosdark .order-dialog {
+        background: rgba(44,44,46,0.66); -webkit-backdrop-filter: blur(44px) saturate(1.8); backdrop-filter: blur(44px) saturate(1.8);
+        border: 1px solid rgba(255,255,255,0.09); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+      }
+      body.theme-macosdark button, body.theme-macosdark .tf, body.theme-macosdark .ebtn, body.theme-macosdark .mw-tab, body.theme-macosdark .tb-tab {
+        background: rgba(255,255,255,0.08); color: #f2f2f7; border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 7px; box-shadow: 0 1px 1px rgba(0,0,0,0.3);
+      }
+      body.theme-macosdark button:hover, body.theme-macosdark .tf:hover { background: rgba(255,255,255,0.14); }
+      body.theme-macosdark .tf.on, body.theme-macosdark .tb-tab.on, body.theme-macosdark .mw-tab.on, body.theme-macosdark .primary {
+        background: linear-gradient(180deg, #1a8fff 0%, #0a84ff 100%); color: #fff; border-color: transparent; font-weight: 600;
+      }
+      body.theme-macosdark .primary { box-shadow: 0 2px 8px rgba(10,132,255,0.4); border-radius: 8px; }
+      body.theme-macosdark input, body.theme-macosdark select {
+        background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 7px;
+      }
+      body.theme-macosdark select option { background: #2a2a2c; color: #f2f2f7; }
+      /* macOS LIGHT */
+      body.theme-macoslight .toolbar {
+        background: rgba(245,245,247,0.72); -webkit-backdrop-filter: blur(36px) saturate(1.5); backdrop-filter: blur(36px) saturate(1.5);
+        color: #1d1d1f; border: 0; border-bottom: 1px solid rgba(0,0,0,0.08);
+      }
+      body.theme-macoslight .left, body.theme-macoslight .toolbox-area, body.theme-macoslight .settings-dialog, body.theme-macoslight .order-dialog {
+        background: rgba(255,255,255,0.7); -webkit-backdrop-filter: blur(44px) saturate(1.6); backdrop-filter: blur(44px) saturate(1.6);
+        border: 1px solid rgba(0,0,0,0.07); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.16);
+      }
+      body.theme-macoslight button, body.theme-macoslight .tf, body.theme-macoslight .ebtn, body.theme-macoslight .mw-tab, body.theme-macoslight .tb-tab {
+        background: rgba(255,255,255,0.8); color: #1d1d1f; border: 1px solid rgba(0,0,0,0.1);
+        border-radius: 7px; box-shadow: 0 1px 1px rgba(0,0,0,0.06);
+      }
+      body.theme-macoslight button:hover, body.theme-macoslight .tf:hover { background: #ffffff; }
+      body.theme-macoslight .tf.on, body.theme-macoslight .tb-tab.on, body.theme-macoslight .mw-tab.on, body.theme-macoslight .primary {
+        background: linear-gradient(180deg, #1a86ff 0%, #007aff 100%); color: #fff; border-color: transparent; font-weight: 600;
+      }
+      body.theme-macoslight .primary { box-shadow: 0 2px 8px rgba(0,122,255,0.35); border-radius: 8px; }
+      body.theme-macoslight input, body.theme-macoslight select {
+        background: rgba(255,255,255,0.9); border: 1px solid rgba(0,0,0,0.12); border-radius: 7px;
+      }
+
+      /* ── Theme: GITHUB (Dark + Light) — UNMISTAKABLE GitHub, not generic dark/light:
+         system-ui font, MONOSPACE for EVERY number/price (the signature), a GREEN primary
+         button (GitHub's CTA), prominent blue accent on active/focus, flat Primer borders. ── */
+      body.theme-github, body.theme-githublight,
+      body.theme-github button, body.theme-githublight button,
+      body.theme-github input, body.theme-githublight input, body.theme-github select, body.theme-githublight select {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+      }
+      /* Mono + tabular figures for ALL numbers/prices — desktop tables AND mobile rows/band. */
+      body.theme-github .num, body.theme-githublight .num,
+      body.theme-github .sym, body.theme-githublight .sym,
+      body.theme-github .stat-v, body.theme-githublight .stat-v,
+      body.theme-github .active-sym, body.theme-githublight .active-sym,
+      body.theme-github .m-q-px, body.theme-githublight .m-q-px,
+      body.theme-github .m-q-time, body.theme-githublight .m-q-time,
+      body.theme-github .m-row-pnl, body.theme-githublight .m-row-pnl,
+      body.theme-github .m-row-sub, body.theme-githublight .m-row-sub,
+      body.theme-github .m-acct-v, body.theme-githublight .m-acct-v,
+      body.theme-github .m-band-px, body.theme-githublight .m-band-px,
+      body.theme-github .m-band-vol, body.theme-githublight .m-band-vol,
+      body.theme-github .m-acctview-v, body.theme-githublight .m-acctview-v,
+      body.theme-github .m-acctview-hero, body.theme-githublight .m-acctview-hero {
+        font-family: ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+        font-variant-numeric: tabular-nums;
+      }
+      /* GitHub GREEN primary button (the signature CTA) — overrides the blue-accent default. */
+      body.theme-github .primary, body.theme-github .neworder { background: #238636; color: #fff; border: 1px solid rgba(240,246,252,0.1); border-radius: 6px; }
+      body.theme-github .primary:hover, body.theme-github .neworder:hover { background: #2ea043; }
+      body.theme-githublight .primary, body.theme-githublight .neworder { background: #1f883d; color: #fff; border: 1px solid rgba(31,35,40,0.15); border-radius: 6px; }
+      body.theme-githublight .primary:hover, body.theme-githublight .neworder:hover { background: #1a7f37; }
+      /* Prominent blue focus ring (GitHub focus) + flat 6px-rounded controls. */
+      body.theme-github button:focus-visible, body.theme-githublight button:focus-visible,
+      body.theme-github input:focus, body.theme-githublight input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+      body.theme-github .tf, body.theme-githublight .tf,
+      body.theme-github .mw-tab, body.theme-githublight .mw-tab,
+      body.theme-github .tb-tab, body.theme-githublight .tb-tab,
+      body.theme-github input, body.theme-githublight input, body.theme-github select, body.theme-githublight select { border-radius: 6px; }
+
+      /* ── Settings (full-page view) ──
+         The enhanced Settings PAGE — a real sectioned view (replaces the old centre
+         modal). Mounted by the shell as a full-bleed surface over the workspace
+         (toolbar stays). Two columns: a left section-nav + search, and a scrolling
+         content pane whose controls are auto-rendered from the settings descriptors.
+         Everything reads the theme tokens so it recolours live with the active theme;
+         append-only — no rule above is modified. */
+      .sp { position:absolute; inset:0; z-index:40; display:grid; grid-template-columns:228px 1fr;
+        background:var(--bg); color:var(--fg); overflow:hidden; }
+      /* nav */
+      .sp-nav { display:flex; flex-direction:column; min-height:0; background:var(--panel);
+        border-right:1px solid var(--line); }
+      .sp-nav-head { display:flex; align-items:center; justify-content:space-between; padding:14px 14px 10px; }
+      .sp-nav-title { font-size:15px; font-weight:600; letter-spacing:.2px; }
+      .sp-close { background:none; border:0; color:var(--muted); font-size:22px; line-height:1; padding:0 4px; }
+      .sp-close:hover { color:var(--fg); }
+      .sp-search { padding:0 12px 10px; }
+      .sp-search input { width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+        border-radius:7px; padding:7px 10px; font-size:12.5px; }
+      .sp-search input:focus { outline:none; border-color:var(--accent); }
+      .sp-nav-list { list-style:none; margin:0; padding:4px 8px; overflow:auto; flex:1; min-height:0; }
+      .sp-nav-item { width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px;
+        background:none; border:0; color:var(--muted); text-align:left; padding:8px 10px; border-radius:7px;
+        font-size:12.5px; font-weight:500; }
+      .sp-nav-item:hover { background:var(--hover); color:var(--fg); }
+      .sp-nav-item.on { background:var(--sel); color:var(--fg); font-weight:600; }
+      .sp-nav-item.dim { opacity:.42; }
+      .sp-nav-count { background:var(--accent); color:var(--on-accent); border-radius:999px;
+        font-size:10px; font-weight:700; min-width:17px; height:17px; padding:0 5px;
+        display:inline-flex; align-items:center; justify-content:center; }
+      .sp-nav-foot { padding:10px 14px; border-top:1px solid var(--line); }
+      .sp-nav-foot code, .sp-section-head code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+        color:var(--fg); font-size:11px; }
+      /* content */
+      .sp-content { overflow:auto; min-height:0; padding:20px 26px 40px; max-width:760px; }
+      .sp-section-head { margin:2px 0 12px; }
+      .sp-section-head h2 { margin:0 0 4px; font-size:18px; font-weight:600; }
+      .sp-section-head p { margin:0; font-size:12.5px; line-height:1.5; max-width:62ch; }
+      .sp-empty { padding:18px 2px; font-size:13px; }
+
+      /* a setting row (descriptor-driven) */
+      .sp-row, .sp-action-row { display:flex; align-items:flex-start; justify-content:space-between; gap:24px;
+        padding:14px 2px; border-bottom:1px solid var(--line); }
+      .sp-row-label { min-width:0; flex:1; }
+      .sp-row-title { font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+      .sp-row-help { color:var(--muted); font-size:12px; margin-top:3px; line-height:1.45; max-width:54ch; }
+      .sp-row-path { color:var(--muted); opacity:.7; font-size:10.5px; margin-top:4px;
+        font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .sp-row-control { display:flex; align-items:center; gap:10px; flex:none; padding-top:1px; }
+      .sp-badge { background:var(--accent); color:var(--on-accent); border-radius:999px; font-size:9.5px;
+        font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:1px 7px; }
+      .sp-hl { background:var(--gold); color:var(--bg); border-radius:3px; padding:0 2px; }
+      .sp-row.scoped { background:linear-gradient(90deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 60%); }
+
+      /* per-chart "this chart" toggle */
+      .sp-scope { display:inline-flex; align-items:center; gap:5px; color:var(--muted); font-size:11px;
+        white-space:nowrap; cursor:pointer; }
+      .sp-scope input { accent-color:var(--accent); }
+
+      /* controls */
+      .sp-toggle { position:relative; width:38px; height:21px; border-radius:999px; border:1px solid var(--line2);
+        background:var(--panel2); padding:0; transition:background .12s, border-color .12s; flex:none; }
+      .sp-toggle .sp-toggle-knob { position:absolute; top:1px; left:1px; width:17px; height:17px; border-radius:50%;
+        background:var(--muted); transition:transform .12s, background .12s; }
+      .sp-toggle.on { background:var(--accent); border-color:var(--accent); }
+      .sp-toggle.on .sp-toggle-knob { transform:translateX(17px); background:var(--on-accent); }
+      .sp-select { background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:7px;
+        padding:6px 9px; font-size:12.5px; font-family:inherit; min-width:140px; }
+      .sp-select:hover { border-color:var(--line-hover); }
+      .sp-select:focus { outline:none; border-color:var(--accent); }
+      .sp-number, .sp-text { background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+        border-radius:7px; padding:6px 9px; font-size:12.5px; font-family:inherit; }
+      .sp-number { width:96px; text-align:right; font-variant-numeric:tabular-nums; }
+      .sp-text { width:200px; }
+      .sp-number:focus, .sp-text:focus { outline:none; border-color:var(--accent); }
+      .sp-color { display:flex; align-items:center; gap:7px; }
+      .sp-color-swatch { width:30px; height:26px; padding:0; border:1px solid var(--line); border-radius:6px;
+        background:var(--panel2); cursor:pointer; }
+      .sp-color-text { width:118px; background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+        border-radius:7px; padding:6px 8px; font-size:11.5px; font-family:ui-monospace, monospace; }
+      .sp-color-text:focus { outline:none; border-color:var(--accent); }
+
+      /* theme picker */
+      .sp-theme { padding:6px 0 16px; border-bottom:1px solid var(--line); margin-bottom:6px; }
+      .sp-theme-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+      .sp-swatch { background:var(--panel); border:2px solid var(--line2); padding:6px; cursor:pointer;
+        display:flex; flex-direction:column; gap:6px; text-align:left; }
+      .sp-swatch:hover { border-color:var(--accent); }
+      .sp-swatch.on { box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+      .sp-swatch-prev { overflow:hidden; height:78px; display:flex; flex-direction:column; }
+      .sp-swatch-bar { height:14px; display:flex; align-items:center; gap:4px; padding:0 6px; flex:none; }
+      .sp-swatch-dot { width:5px; height:5px; border-radius:50%; }
+      .sp-swatch-chart { position:relative; flex:1; }
+      .sp-swatch-grid { position:absolute; inset:0; background-size:18px 14px; opacity:.6; }
+      .sp-swatch-candle { position:absolute; width:8px; border:1px solid transparent; border-radius:1px; }
+      .sp-swatch-wick { position:absolute; width:1px; }
+      .sp-swatch-line { position:absolute; left:8%; right:8%; top:58%; height:2px; opacity:.85; border-radius:2px; }
+      .sp-swatch-meta { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:0 2px; }
+      .sp-swatch-name { font-size:11.5px; font-weight:600; }
+      .sp-swatch-active { font-size:9.5px; text-transform:uppercase; letter-spacing:.5px; font-weight:700; }
+      .sp-theme-note { margin:10px 0 0; }
+
+      /* buttons (data/account + advanced) */
+      .sp-btn { background:var(--accent); color:var(--on-accent); border:0; border-radius:7px; padding:7px 14px;
+        font-size:12.5px; font-weight:600; font-family:inherit; }
+      .sp-btn:hover:not(:disabled) { filter:brightness(1.08); }
+      .sp-btn.ghost { background:var(--hover); color:var(--fg); border:1px solid var(--line2); }
+      .sp-btn.ghost:hover:not(:disabled) { border-color:var(--line-hover); }
+      .sp-btn.danger { background:var(--down); color:#fff; }
+      .sp-btn:disabled { opacity:.45; cursor:default; }
+      .sp-file { position:relative; overflow:hidden; cursor:pointer; display:inline-flex; align-items:center; }
+      .sp-file input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; }
+
+      /* advanced */
+      .sp-advanced { padding-top:6px; }
+      .sp-adv-block { padding:14px 0; border-bottom:1px solid var(--line); }
+      .sp-adv-block .sp-row-title { font-size:14px; }
+      .sp-adv-block .sp-row-help { margin-bottom:10px; }
+      .sp-adv-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:4px; }
+      .sp-json { width:100%; background:var(--input-ro); border:1px solid var(--line); color:var(--fg);
+        border-radius:8px; padding:9px 11px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size:11.5px; line-height:1.45; margin-top:8px; resize:vertical; }
+      .sp-json:focus { outline:none; border-color:var(--accent); }
+      .sp-adv-status { margin-top:14px; }
+
+      /* pixel skins: square the settings chrome to match the retro look */
+      body.theme-8bit .sp-swatch, body.theme-16bit .sp-swatch,
+      body.theme-8bit .sp-btn, body.theme-16bit .sp-btn,
+      body.theme-8bit .sp-select, body.theme-16bit .sp-select,
+      body.theme-8bit .sp-number, body.theme-16bit .sp-number,
+      body.theme-8bit .sp-text, body.theme-16bit .sp-text,
+      body.theme-8bit .sp-search input, body.theme-16bit .sp-search input,
+      body.theme-8bit .sp-nav-item, body.theme-16bit .sp-nav-item,
+      body.theme-8bit .sp-toggle, body.theme-16bit .sp-toggle,
+      body.theme-8bit .sp-json, body.theme-16bit .sp-json {
+        border-radius:0; border-width:var(--skin-border-width); border-style:solid;
+      }
+      body.theme-8bit .sp-toggle .sp-toggle-knob, body.theme-16bit .sp-toggle .sp-toggle-knob { border-radius:0; }
+      body.theme-8bit .sp-content, body.theme-16bit .sp-content { font-size:9px; line-height:1.8; }
+
+      /* ── Alerts / Sounds (alerts manager panel + toast surface) ──
+         All colours are theme tokens so the surface re-themes live. The toast stack is
+         a fixed top-right column; pointer-events are scoped to the cards so it never
+         blocks the chart underneath. */
+      /* Toast surface */
+      .toast-stack { position:fixed; top:calc(48px + var(--ta-top-inset,0px)); right:14px; z-index:120; display:flex; flex-direction:column; gap:8px;
+        width:300px; max-width:calc(100vw - 28px); pointer-events:none; }
+      .toast { pointer-events:auto; display:flex; align-items:flex-start; gap:9px; padding:10px 11px;
+        background:var(--panel); border:1px solid var(--line2); border-left:3px solid var(--accent);
+        border-radius:9px; box-shadow:0 10px 30px var(--shadow); cursor:pointer;
+        animation:toast-in .16s ease-out; }
+      .toast:hover { border-color:var(--line-hover); }
+      .toast-alert { border-left-color:var(--gold); }
+      .toast-success { border-left-color:var(--green); }
+      .toast-error { border-left-color:var(--down); }
+      .toast-info { border-left-color:var(--accent); }
+      .toast-icon { font-size:14px; line-height:1.3; flex:0 0 auto; }
+      .toast-text { flex:1; min-width:0; }
+      .toast-title { font-size:12.5px; font-weight:600; color:var(--fg); word-break:break-word; }
+      .toast-body { font-size:11px; color:var(--muted); margin-top:2px; word-break:break-word; }
+      .toast-x { flex:0 0 auto; background:none; border:0; color:var(--muted); font-size:15px; line-height:1; padding:0 2px; }
+      .toast-x:hover { color:var(--fg); }
+      @keyframes toast-in { from { opacity:0; transform:translateX(12px); } to { opacity:1; transform:translateX(0); } }
+
+      /* Alerts manager panel */
+      .alerts-panel { padding:10px 12px; }
+      .alerts-add { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding-bottom:10px; border-bottom:1px solid var(--line); }
+      .alerts-add select, .alerts-add input { background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+        border-radius:6px; padding:6px 8px; font-size:12px; font-family:inherit; }
+      .alerts-add .al-sym { min-width:120px; } .alerts-add .al-price { width:110px; } .alerts-add .al-acc { max-width:200px; }
+      .alerts-add select:focus, .alerts-add input:focus { outline:none; border-color:var(--accent); }
+      .alerts-empty { padding:14px 2px; }
+      .alerts-push { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:8px 2px; border-bottom:1px solid var(--line); }
+      .alerts-push label { display:inline-flex; align-items:center; gap:4px; cursor:pointer; }
+      .al-table { width:100%; border-collapse:collapse; margin-top:8px; }
+      .al-table th { text-align:left; color:var(--muted); font-weight:500; font-size:10.5px; padding:5px 8px; border-bottom:1px solid var(--line); }
+      .al-table th.num { text-align:right; }
+      .al-table td { padding:5px 8px; border-bottom:1px solid var(--row-line); font-size:12px; vertical-align:middle; }
+      .al-table td.num { text-align:right; font-variant-numeric:tabular-nums; }
+      .al-row.al-off { opacity:0.5; }
+      .al-row.al-fired .al-badge { color:var(--gold); }
+      .al-en { width:22px; text-align:center; }
+      .al-badge { font-weight:600; }
+      .al-actions { white-space:nowrap; text-align:right; }
+      .al-actions .linkbtn { margin-right:8px; }
+      .al-actions .rm { visibility:visible; }
+      /* Pixel-skin squaring (match the rest of the retro chrome) */
+      body.theme-8bit .toast, body.theme-16bit .toast,
+      body.theme-8bit .alerts-add select, body.theme-16bit .alerts-add select,
+      body.theme-8bit .alerts-add input, body.theme-16bit .alerts-add input {
+        border-radius:0; border-width:var(--skin-border-width); border-style:solid;
+      }
+
+      /* ── Layout: status bar (footer) ──
+         The pinned bottom strip (grid row "status"). A slim, single-line cluster of
+         live read-outs: connection state, symbol+TF, bid/spread, server clock +
+         candle countdown, balance/equity/floating P&L, and an optional tool hint.
+         All colours are theme tokens so it re-themes live; append-only, no rule above
+         is modified. Tabular numerics so the figures don't jitter as they update. */
+      .statusbar { grid-column:1 / -1; display:flex; align-items:center; gap:10px;
+        height:24px; padding:0 12px; overflow:hidden; white-space:nowrap;
+        background:var(--panel); border-top:1px solid var(--line);
+        font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+      .statusbar .sb-sep { width:1px; height:13px; background:var(--line2); flex:none; }
+      .statusbar .sb-spacer { flex:1 1 auto; min-width:8px; }
+      .statusbar .sb-dim { color:var(--muted); opacity:.6; }
+      .statusbar .sb-k { color:var(--muted); opacity:.7; margin-right:1px; }
+      .statusbar .sb-v { color:var(--fg); font-weight:600; }
+      .statusbar .sb-k + .sb-v { margin-right:9px; }
+      /* connection chip */
+      .statusbar .sb-conn { display:inline-flex; align-items:center; gap:6px; flex:none; }
+      .statusbar .sb-dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:none; }
+      .statusbar .sb-warm { color:var(--green); }
+      .statusbar .sb-warm .sb-dot { background:var(--green); box-shadow:0 0 6px var(--green-glow); }
+      .statusbar .sb-connecting { color:var(--accent); }
+      .statusbar .sb-connecting .sb-dot { background:var(--accent); animation:pulse 1s ease-in-out infinite; }
+      .statusbar .sb-offline { color:var(--amber); }
+      .statusbar .sb-offline .sb-dot { background:var(--amber); }
+      /* symbol + tf */
+      .statusbar .sb-sym b { color:var(--fg); font-weight:600; }
+      .statusbar .sb-tf { color:var(--accent); font-weight:600; }
+      /* quote / clock / countdown / account */
+      .statusbar .sb-quote, .statusbar .sb-acct { display:inline-flex; align-items:center; gap:0; flex:none; }
+      .statusbar .sb-clock { color:var(--fg); font-weight:600; flex:none; }
+      .statusbar .sb-count { color:var(--muted); flex:none; }
+      .statusbar .sb-pl.sb-up { color:var(--up); } .statusbar .sb-pl.sb-down { color:var(--down); }
+      .statusbar .sb-up { color:var(--up); } .statusbar .sb-down { color:var(--down); }
+      .statusbar .sb-ccy { color:var(--muted); opacity:.7; margin-left:2px; }
+      .statusbar .sb-tool { color:var(--accent); flex:none; }
+      /* Pixel skin: square + thicker top border, smaller dense type. */
+      body.theme-8bit .statusbar, body.theme-16bit .statusbar {
+        border-width:var(--skin-border-width); font-size:8px; height:auto; line-height:1.9; }
+
+      /* ── Responsive (WEB ONLY) ──────────────────────────────────────────────────
+         The #mt5 GRID is reflowed in JS (Terminal.tsx gridStyle — it's an inline style
+         that would override @media), and #mt5 carries data-tier="desktop|tablet|mobile"
+         from the useViewport() hook. The hook resolves 'desktop' on the Electron app
+         (no `.web`/data-platform marker → never reflows) and reflows by width only on
+         the web build (marker injected before first paint). So these rules key off
+         #mt5[data-tier=…]: they are INERT on desktop (attr is always "desktop") and on
+         the web they light up exactly when the matching mobile/tablet DOM is rendered.
+         The web build also sets viewport-fit=cover, so env(safe-area-inset-*) clears the
+         iPhone home-indicator / notch and the Android gesture bar. Breakpoints mirror
+         useViewport.ts (mobile ≤600, tablet 601–1024). No feature is removed — panels
+         are re-homed into a bottom-nav (mobile) / drawer + sheet (tablet). */
+
+      /* hide the desktop maximize affordances on touch tiers (they reflow, not maximize) */
+      #mt5[data-tier="mobile"] .toolbox-max, #mt5[data-tier="tablet"] .toolbox-max,
+      #mt5[data-tier="mobile"] .ctab-max, #mt5[data-tier="tablet"] .ctab-max,
+      #mt5[data-tier="mobile"] .chart-cell-max, #mt5[data-tier="tablet"] .chart-cell-max { display:none; }
+      /* multi-pane layouts (side-by-side/grid) aren't practical on a phone — drop the layout
+         switcher there so the symbol tabs get the full width (the + add-chart stays). */
+      #mt5[data-tier="mobile"] .ctab-layout { display:none; }
+
+      /* ── TABLET (601–1024): chart full-width; left sidebar → off-canvas drawer ── */
+      #mt5[data-tier="tablet"] .toolbar .logo, #mt5[data-tier="tablet"] .toolbar .who { display:none; }
+      /* Drop the symbol pill on tablet (it's shown in the status bar + chart tabs) to give
+         the action cluster the width it needs; the tf-bar already scrolls. */
+      #mt5[data-tier="tablet"] .toolbar .active-sym { display:none; }
+      #mt5[data-tier="tablet"] .toolbar .tf-bar { overflow-x:auto; }
+      #mt5[data-tier="tablet"] .m-drawer {
+        position:fixed; top:calc(42px + var(--ta-top-inset,0px)); bottom:24px; left:0; z-index:60; width:min(300px, 82vw);
+        padding-left:env(safe-area-inset-left); background:var(--panel); border-right:1px solid var(--line2);
+        box-shadow:6px 0 24px var(--shadow); transform:translateX(-102%); transition:transform .18s ease;
+        display:flex; flex-direction:column; overflow:hidden; }
+      #mt5[data-tier="tablet"] .m-drawer.on { transform:translateX(0); }
+      #mt5[data-tier="tablet"] .m-drawer .left-pane { min-height:0; }
+      #mt5[data-tier="tablet"] .m-drawer-scrim {
+        position:fixed; inset:calc(42px + var(--ta-top-inset,0px)) 0 24px 0; z-index:59; background:var(--backdrop);
+        opacity:0; pointer-events:none; transition:opacity .18s; }
+      #mt5[data-tier="tablet"] .m-drawer-scrim.on { opacity:1; pointer-events:auto; }
+
+      /* ── MOBILE (≤600): single column + bottom tab bar; non-chart views overlay the
+         always-mounted chart (.m-overlay) so lightweight-charts is never resized to 0 ── */
+      #mt5[data-tier="mobile"] .m-overlay {
+        grid-area:main; position:relative; min-width:0; min-height:0; overflow:hidden;
+        display:flex; flex-direction:column; background:var(--bg); z-index:8; }
+      #mt5[data-tier="mobile"] .m-overlay .left,
+      #mt5[data-tier="mobile"] .m-overlay .toolbox-area {
+        width:100%; flex:1 1 0; min-height:0; border:0; position:relative; }
+      #mt5[data-tier="mobile"] .m-overlay .m-left { display:flex; flex-direction:column; }
+      #mt5[data-tier="mobile"] .m-moresec { display:flex; flex-direction:column; }
+      #mt5[data-tier="mobile"] .m-more-actions {
+        display:flex; flex-wrap:wrap; gap:8px; align-items:center; flex:none;
+        padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); }
+
+      /* LANDSCAPE phone on the Charts view = chart-only: the tab bar and the one-tap band
+         give the chart their height back; rotate back (or any other view) restores them. */
+      /* …only on a genuinely SHORT viewport (data-compact = a real phone on its side). A tall
+         desktop window forced to the mobile layout is "landscape" too but must KEEP its nav. */
+      #mt5[data-tier="mobile"][data-orient="landscape"][data-compact="1"][data-mview="chart"] .m-nav,
+      #mt5[data-tier="mobile"][data-orient="landscape"][data-compact="1"][data-mview="chart"] .m-band { display:none; }
+      /* live-stream dropped: a floating pill under the header (the status bar is hidden on phones) */
+      #mt5[data-tier="mobile"] .m-net { position:fixed; top:calc(60px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%);
+        z-index:40; padding:7px 14px; border-radius:999px; background:var(--panel); border:1px solid var(--line2);
+        color:var(--fg); font-size:12px; font-weight:600; box-shadow:0 4px 16px rgba(0,0,0,.35); white-space:nowrap;
+        max-width:calc(100vw - 24px); overflow:hidden; text-overflow:ellipsis; }
+      #mt5[data-tier="mobile"] .m-net::before { content:''; display:inline-block; width:8px; height:8px; margin-right:8px; border-radius:50%;
+        background:var(--down); animation:m-net-blink 1s ease-in-out infinite; vertical-align:middle; }
+      @keyframes m-net-blink { 50% { opacity:.25; } }
+      /* bottom tab bar */
+      #mt5[data-tier="mobile"] .m-nav {
+        grid-area:nav; display:flex; align-items:stretch; background:var(--panel);
+        border-top:1px solid var(--line2);
+        height:calc(52px + env(safe-area-inset-bottom)); padding-bottom:env(safe-area-inset-bottom); }
+      #mt5[data-tier="mobile"] .m-nav button {
+        flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+        gap:3px; background:none; border:0; color:var(--muted); font-size:10px; padding:6px 0; }
+      #mt5[data-tier="mobile"] .m-nav .m-nav-ico { font-size:19px; line-height:1; }
+      #mt5[data-tier="mobile"] .m-nav button.on { color:var(--accent); }
+
+      /* condense the toolbar — the hidden actions live in the More tab */
+      #mt5[data-tier="mobile"] .toolbar { gap:8px; padding:0 8px; }
+      #mt5[data-tier="mobile"] .toolbar .tb-left { min-width:0; }
+      #mt5[data-tier="mobile"] .toolbar .logo,
+      #mt5[data-tier="mobile"] .toolbar .editor-toggle,
+      #mt5[data-tier="mobile"] .toolbar .theme-select,
+      #mt5[data-tier="mobile"] .toolbar > .tb-right > .iconbtn,
+      #mt5[data-tier="mobile"] .toolbar .who,
+      #mt5[data-tier="mobile"] .toolbar .tb-right > .linkbtn { display:none; }
+      #mt5[data-tier="mobile"] .toolbar .tf-bar { overflow-x:auto; flex:1 1 auto; }
+
+      /* order ticket → bottom sheet */
+      #mt5[data-tier="mobile"] .modal-backdrop { align-items:flex-end; }
+      #mt5[data-tier="mobile"] .order-dialog {
+        width:100%; max-width:none; border-radius:14px 14px 0 0; max-height:92vh; overflow-y:auto;
+        padding-bottom:calc(16px + env(safe-area-inset-bottom)); }
+
+      /* settings page → single column */
+      #mt5[data-tier="mobile"] .sp { grid-template-columns:1fr; grid-template-rows:auto 1fr; }
+      #mt5[data-tier="mobile"] .sp-nav { border-right:0; border-bottom:1px solid var(--line); max-height:38vh; }
+      #mt5[data-tier="mobile"] .sp-content { padding:14px 16px 40px; }
+
+      /* roomier tap targets on the dense tables */
+      #mt5[data-tier="mobile"] .mw-table td, #mt5[data-tier="mobile"] .tb-table td { padding:10px; }
+      #mt5[data-tier="mobile"] .mw-table th, #mt5[data-tier="mobile"] .tb-table th { padding:8px 10px; }
+      /* The 10-col positions table (Toolbox Trade tab, reached via ☰) overflows the phone
+         width. Hide the detail columns (Open time [col 2] + Open / Current / S-L / T-P
+         [cols 5-8] — all on the bottom-nav Trade view) so Symbol / Side / Volume / Profit /
+         actions fit without a side-scroll. */
+      #mt5[data-tier="mobile"] .tb-positions th:nth-child(2),
+      #mt5[data-tier="mobile"] .tb-positions td:nth-child(2),
+      #mt5[data-tier="mobile"] .tb-positions th:nth-child(n+5):nth-child(-n+8),
+      #mt5[data-tier="mobile"] .tb-positions td:nth-child(n+5):nth-child(-n+8) { display:none; }
+
+      /* ── MOBILE pass-2: touch targets (≥44px) + overflow/out-of-view fixes ───────────
+         From a real-device pass: "elements out of view, buttons too small, elements
+         running off-screen". Below: every interactive control reaches a ~44px tap target,
+         inputs/selects use 16px (stops iOS focus-zoom), and the things that overran the
+         viewport are contained. Mobile-only (#mt5[data-tier="mobile"]) → desktop/tablet
+         untouched. */
+
+      /* 16px form controls — below 16px iOS zooms the page on focus */
+      #mt5[data-tier="mobile"] input, #mt5[data-tier="mobile"] select, #mt5[data-tier="mobile"] textarea { font-size:16px; }
+
+      /* OUT-OF-VIEW #1 — the status bar would auto-flow BELOW the bottom-nav and clip
+         (nowrap/overflow:hidden/24px). Its info lives in the chart / quotes / trade. */
+      #mt5[data-tier="mobile"] .statusbar { display:none; }
+
+      /* OUT-OF-VIEW #2 — the drawing overlays render desktop-sized (.dtb 28px buttons,
+         .omp 210px) and overlap the chart on a phone. Hide until a touch-native drawing
+         UI exists (queued); drawing stays available on desktop + tablet, and existing
+         drawings still render on the mobile chart. */
+      #mt5[data-tier="mobile"] .dtb, #mt5[data-tier="mobile"] .omp { display:none; }
+      /* press-and-hold the chart reveals the drawing toolbar (touch-sized); ✓ Done dismisses */
+      #mt5[data-tier="mobile"][data-draw="open"] .dtb { display:flex; }
+      #mt5[data-tier="mobile"] .dtb-btn { width:40px; height:40px; }
+      #mt5[data-tier="mobile"] .dtb-swatch { width:18px; height:18px; }
+      /* The desktop collapse (floating ✎) + drag-grip/collapse header STRAND the toolbar on
+         a phone (tap ✎ with the bar hidden → gone, no way back). On mobile the bar is always
+         shown via data-draw and dismissed with ✓ Done — so hide both affordances (Item 4). */
+      #mt5[data-tier="mobile"] .dtb-show, #mt5[data-tier="mobile"] .dtb-head { display:none; }
+      #mt5[data-tier="mobile"] .m-draw-done { position:absolute; top:8px; right:8px; z-index:8;
+        background:var(--accent); color:var(--on-accent); border:0; border-radius:9px; padding:10px 16px;
+        font-size:13px; font-weight:700; box-shadow:0 4px 14px var(--shadow); }
+
+      /* OUT-OF-VIEW #3 — keep the toolbar from pushing New Order / Indicators off-screen:
+         let the TF strip absorb the slack and scroll, ellipsis the symbol. */
+      #mt5[data-tier="mobile"] .toolbar { overflow:hidden; }
+      #mt5[data-tier="mobile"] .toolbar .tf-bar { min-width:0; }
+      #mt5[data-tier="mobile"] .toolbar .tb-right { gap:6px; }
+      #mt5[data-tier="mobile"] .toolbar .active-sym {
+        max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+      /* touch buttons → ≥44px, vertically centred */
+      #mt5[data-tier="mobile"] .tf,
+      #mt5[data-tier="mobile"] .neworder,
+      #mt5[data-tier="mobile"] .ind-menu-btn,
+      #mt5[data-tier="mobile"] .mw-tab,
+      #mt5[data-tier="mobile"] .tb-tab,
+      #mt5[data-tier="mobile"] .ord-type,
+      #mt5[data-tier="mobile"] .primary,
+      #mt5[data-tier="mobile"] .m-more-actions .ebtn,
+      #mt5[data-tier="mobile"] .m-more-actions .editor-toggle,
+      #mt5[data-tier="mobile"] .m-more-actions .linkbtn {
+        min-height:44px; display:inline-flex; align-items:center; justify-content:center; }
+      #mt5[data-tier="mobile"] .tf { padding:0 13px; }
+      #mt5[data-tier="mobile"] .neworder { padding:0 14px; }
+      #mt5[data-tier="mobile"] .mw-tab, #mt5[data-tier="mobile"] .tb-tab { padding:0 14px; }
+      #mt5[data-tier="mobile"] .m-more-actions .theme-select { min-height:44px; }
+
+      /* chart tabs: taller strip + always-visible close/pin (no :hover on touch) */
+      #mt5[data-tier="mobile"] .chart-tabs { height:44px; }
+      #mt5[data-tier="mobile"] .ctab { font-size:13px; padding:0 12px; }
+      #mt5[data-tier="mobile"] .ctab-x, #mt5[data-tier="mobile"] .ctab-pin { visibility:visible; font-size:15px; padding:0 7px; }
+      #mt5[data-tier="mobile"] .ctab-add, #mt5[data-tier="mobile"] .ctab-lay { min-width:42px; }
+
+      /* row actions are :hover-revealed on desktop — there is no hover on touch */
+      #mt5[data-tier="mobile"] .rm { visibility:visible; font-size:18px; padding:2px 8px; }
+      #mt5[data-tier="mobile"] .nav-rm-acct { visibility:visible; padding:4px 8px; }
+      #mt5[data-tier="mobile"] .nav-rm-acct svg { width:16px; height:16px; }
+      #mt5[data-tier="mobile"] .nav-acct-row, #mt5[data-tier="mobile"] .nav-add { min-height:48px; }
+
+      /* order ticket internals: chunky steppers / type chips / inputs / buy-sell */
+      #mt5[data-tier="mobile"] .stepbtn { width:48px; min-height:48px; font-size:22px; }
+      #mt5[data-tier="mobile"] .vol input { min-height:48px; }
+      #mt5[data-tier="mobile"] .order-btns button { padding:14px; }
+      #mt5[data-tier="mobile"] .order-dialog select,
+      #mt5[data-tier="mobile"] .order-dialog > input,
+      #mt5[data-tier="mobile"] .order-dialog .row input { min-height:44px; }
+
+      /* settings rows: the 140–200px control overran the ~328px column → stack it full-width */
+      #mt5[data-tier="mobile"] .sp-row, #mt5[data-tier="mobile"] .sp-action-row { flex-direction:column; gap:8px; }
+      #mt5[data-tier="mobile"] .sp-row-control { width:100%; }
+      #mt5[data-tier="mobile"] .sp-text, #mt5[data-tier="mobile"] .sp-select, #mt5[data-tier="mobile"] .sp-number { width:100%; }
+
+      /* ── MT5 MOBILE SHELL (Stage 1) — per-view contextual header + ☰ side-drawer +
+         4-tab bottom nav. Replaces the persistent desktop toolbar with a header that
+         changes per bottom-nav view, mirroring real MT5 mobile. Mobile-only. ── */
+
+      /* contextual header (grid 'toolbar' row, 52px). NO overflow:hidden — the chart
+         header's Indicators dropdown opens below it; the TF strip scrolls on its own. */
+      #mt5[data-tier="mobile"] .m-head {
+        grid-area:toolbar; display:flex; align-items:center; gap:10px; min-width:0;
+        padding:0 8px; background:var(--panel); border-bottom:1px solid var(--line); }
+      #mt5[data-tier="mobile"] .m-head-menu {
+        flex:none; width:44px; height:44px; display:flex; align-items:center; justify-content:center;
+        background:none; border:0; color:var(--fg); font-size:21px; line-height:1; padding:0; }
+      #mt5[data-tier="mobile"] .m-head-title { font-size:18px; font-weight:700; color:var(--fg); letter-spacing:.2px; }
+      #mt5[data-tier="mobile"] .m-head-titlewrap { display:flex; flex-direction:column; min-width:0; flex:1; }
+      #mt5[data-tier="mobile"] .m-head-sub { font-size:12px; font-weight:600; line-height:1.15; }
+      #mt5[data-tier="mobile"] .m-head-sub.up { color:var(--up); }
+      #mt5[data-tier="mobile"] .m-head-sub.down { color:var(--down); }
+      #mt5[data-tier="mobile"] .m-head-sub.muted { color:var(--muted); font-weight:500; }
+      #mt5[data-tier="mobile"] .m-head-add {
+        margin-left:auto; flex:none; width:44px; height:44px; border-radius:8px; font-size:22px; font-weight:600;
+        background:var(--green-bg); color:var(--green); border:1px solid var(--green-line); }
+      /* chart header: symbol + compact TF picker + indicators(icon) + New Order. The TF
+         is a button+dropdown (not a wide strip) so the header never overflows a phone. */
+      #mt5[data-tier="mobile"] .m-head-chart { gap:8px; }
+      /* symbol = a tappable button → the symbol selector (Item 1) */
+      #mt5[data-tier="mobile"] .m-head-sym {
+        flex:none; display:inline-flex; align-items:center; gap:4px; min-height:44px; padding:0 9px;
+        background:var(--hover); border:1px solid var(--line2); border-radius:8px;
+        font-weight:700; font-size:14px; color:var(--accent);
+        max-width:46vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      #mt5[data-tier="mobile"] .m-head-sym:disabled { opacity:.55; }
+      #mt5[data-tier="mobile"] .m-head-spacer { flex:1 1 0; min-width:0; } /* pushes indicators + New Order right */
+      #mt5[data-tier="mobile"] .m-head-chart .ind-menu, #mt5[data-tier="mobile"] .m-head-chart .neworder { flex:none; }
+      /* Indicators → icon only on the chart header; dropdown stays on-screen */
+      #mt5[data-tier="mobile"] .m-head-chart .ind-menu-label { display:none; }
+      #mt5[data-tier="mobile"] .m-head-chart .ind-menu-btn { min-width:44px; min-height:44px; padding:0 9px; }
+      #mt5[data-tier="mobile"] .ind-panel { left:auto; right:6px; width:min(280px, 92vw); }
+      /* symbol caret + muted TF label (the TF is now changed by TAPPING the chart — Item 2) */
+      #mt5[data-tier="mobile"] .m-head-caret { color:var(--muted); font-size:10px; }
+      #mt5[data-tier="mobile"] .m-head-tf { flex:none; font-size:12px; font-weight:700; color:var(--muted); }
+      /* on-chart RADIAL timeframe selector (Item 3): a circular dial toggled by a chart tap.
+         Centered over the chart so it never clips; the current TF sits in the hub, the rest
+         ring around it. Pick to switch + dismiss; tap the backdrop to close. */
+      @keyframes m-tfradial-fade { from { opacity:0; } to { opacity:1; } }
+      /* FAST SPIN-IN: the wheel whirls ~2.5 turns and decelerates to a stop while scaling +
+         fading in; the labels spin WITH the ring and settle upright (the dial ends at rotate 0).
+         A strong ease-out gives the "spun-to-a-stop" feel. */
+      @keyframes m-tfradial-spin { from { opacity:0; transform:scale(.18) rotate(-900deg); } to { opacity:1; transform:scale(1) rotate(0deg); } }
+      @keyframes m-tfradial-spin-out { from { opacity:1; transform:scale(1) rotate(0deg); } to { opacity:0; transform:scale(.45) rotate(220deg); } }
+      #mt5[data-tier="mobile"] .m-tfradial-back { position:absolute; inset:0; z-index:9;
+        display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.4);
+        animation:m-tfradial-fade .14s ease both; }
+      #mt5[data-tier="mobile"] .m-tfradial-back.closing { animation:m-tfradial-fade .15s ease reverse both; }
+      #mt5[data-tier="mobile"] .m-tfradial { position:relative; width:248px; height:248px;
+        animation:m-tfradial-spin .5s cubic-bezier(.12,.7,.22,1) both; }
+      #mt5[data-tier="mobile"] .m-tfradial.closing { animation:m-tfradial-spin-out .15s ease-in both; }
+      @media (prefers-reduced-motion: reduce) { #mt5[data-tier="mobile"] .m-tfradial { animation:m-tfradial-fade .15s ease both; } }
+      #mt5[data-tier="mobile"] .m-tfradial-hub { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+        width:62px; height:62px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+        background:var(--panel); border:1px solid var(--line2); color:var(--accent); font-size:14px; font-weight:800;
+        box-shadow:0 4px 16px var(--shadow); }
+      #mt5[data-tier="mobile"] .m-tfradial-btn { position:absolute; transform:translate(-50%,-50%);
+        width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+        background:var(--panel); border:1px solid var(--line2); color:var(--fg); font-size:13px; font-weight:700;
+        box-shadow:0 4px 14px var(--shadow); transition:background .15s, border-color .15s, color .15s; }
+      #mt5[data-tier="mobile"] .m-tfradial-btn.on { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+      #mt5[data-tier="mobile"] .m-tfradial-btn:active { filter:brightness(1.25); }
+      /* draw-mode dismiss scrim (Item 4): covers the chart (below the .dtb toolbar + ✓ Done);
+         tapping it closes the long-press drawing menu. Only rendered when no tool is armed. */
+      #mt5[data-tier="mobile"] .m-draw-scrim { position:absolute; inset:0; z-index:5; background:transparent; }
+
+      /* bottom-nav SVG icons */
+      #mt5[data-tier="mobile"] .m-nav-ico { display:flex; align-items:center; justify-content:center; }
+      #mt5[data-tier="mobile"] .m-nav-ico svg { width:22px; height:22px; }
+      #mt5[data-tier="mobile"] .m-nav-lbl { font-size:10px; }
+
+      /* ☰ side-drawer (mobile): below the 52px header, full height; accounts + menu */
+      #mt5[data-tier="mobile"] .m-drawer {
+        position:fixed; top:calc(52px + var(--ta-top-inset,0px)); bottom:0; left:0; z-index:60; width:min(320px, 86vw);
+        padding-left:env(safe-area-inset-left); background:var(--panel); border-right:1px solid var(--line2);
+        box-shadow:6px 0 24px var(--shadow); transform:translateX(-102%); transition:transform .18s ease;
+        display:flex; flex-direction:column; overflow:hidden; }
+      #mt5[data-tier="mobile"] .m-drawer.on { transform:translateX(0); }
+      #mt5[data-tier="mobile"] .m-drawer-scrim {
+        position:fixed; inset:calc(52px + var(--ta-top-inset,0px)) 0 0 0; z-index:59; background:var(--backdrop);
+        opacity:0; pointer-events:none; transition:opacity .18s; }
+      #mt5[data-tier="mobile"] .m-drawer-scrim.on { opacity:1; pointer-events:auto; }
+      #mt5[data-tier="mobile"] .m-drawer-inner { display:flex; flex-direction:column; min-height:0; height:100%; }
+      #mt5[data-tier="mobile"] .m-drawer-accts {
+        flex:1 1 auto; min-height:0; display:flex; flex-direction:column; overflow:hidden;
+        border-bottom:1px solid var(--line); }
+      #mt5[data-tier="mobile"] .m-menu {
+        flex:none; display:flex; flex-direction:column; padding:4px 0 calc(8px + env(safe-area-inset-bottom)); }
+      #mt5[data-tier="mobile"] .m-menu-item {
+        display:flex; align-items:center; gap:10px; min-height:48px; padding:0 16px; font-size:14px;
+        text-align:left; background:none; border:0; color:var(--fg); }
+      #mt5[data-tier="mobile"] .m-menu-item:hover { background:var(--hover); }
+      #mt5[data-tier="mobile"] .m-menu-theme { justify-content:space-between; color:var(--muted); }
+      /* Chart-layout picker in the ☰ drawer (relocated from the tab strip) */
+      #mt5[data-tier="mobile"] .m-menu-layout { justify-content:space-between; }
+      #mt5[data-tier="mobile"] .m-layout-pick { display:flex; gap:6px; flex:none; }
+      #mt5[data-tier="mobile"] .m-layout-btn { width:44px; height:44px; display:flex; align-items:center; justify-content:center;
+        background:var(--hover); border:1px solid var(--line2); color:var(--fg); border-radius:8px; font-size:17px; line-height:1; }
+      #mt5[data-tier="mobile"] .m-layout-btn.on { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+
+      /* full-screen sheet (Journal / Alerts) — its own header w/ a back chevron */
+      #mt5[data-tier="mobile"] .m-sheet {
+        position:fixed; inset:var(--ta-top-inset,0px) 0 0 0; z-index:46; display:flex; flex-direction:column; background:var(--bg); }
+      #mt5[data-tier="mobile"] .m-sheet .m-head { height:52px; flex:none; }
+      #mt5[data-tier="mobile"] .m-sheet .toolbox-area { flex:1 1 0; min-height:0; border:0; }
+      /* add-symbol picker sheet (Quotes +): search box over a tappable candidate list */
+      #mt5[data-tier="mobile"] .m-pick-search { flex:none; padding:10px 12px; border-bottom:1px solid var(--line); }
+      #mt5[data-tier="mobile"] .m-pick-search input { width:100%; background:var(--panel2); border:1px solid var(--line);
+        color:var(--fg); border-radius:8px; padding:11px 12px; font-size:16px; }
+      #mt5[data-tier="mobile"] .m-pick-search input:focus { outline:none; border-color:var(--accent); }
+      #mt5[data-tier="mobile"] .m-pick-list { flex:1 1 0; min-height:0; overflow-y:auto; }
+      #mt5[data-tier="mobile"] .m-pick-row { display:flex; align-items:center; justify-content:space-between; width:100%;
+        min-height:50px; padding:0 16px; background:none; border:0; border-bottom:1px solid var(--row-line); color:var(--fg); }
+      #mt5[data-tier="mobile"] .m-pick-row:active { background:var(--row-hover); }
+      #mt5[data-tier="mobile"] .m-pick-sym { font-size:15px; font-weight:600; }
+      #mt5[data-tier="mobile"] .m-pick-plus { color:var(--accent); font-size:20px; font-weight:700; }
+      /* switch mode = a compact bottom SHEET (a quick instrument swap, not the whole screen) */
+      #mt5[data-tier="mobile"] .m-pick-back { position:fixed; inset:0; z-index:56; background:var(--backdrop);
+        display:flex; align-items:flex-end; }
+      #mt5[data-tier="mobile"] .m-pick-sheet { width:100%; max-height:72vh; display:flex; flex-direction:column;
+        background:var(--panel); border-top:1px solid var(--line2); border-radius:14px 14px 0 0; overflow:hidden;
+        padding-bottom:env(safe-area-inset-bottom); }
+      #mt5[data-tier="mobile"] .m-pick-sheet-h { display:flex; align-items:center; justify-content:space-between;
+        padding:12px 16px; border-bottom:1px solid var(--line); font-size:15px; font-weight:700; color:var(--fg); }
+      #mt5[data-tier="mobile"] .m-pick-sheet .m-pick-list { flex:1 1 auto; min-height:0; }
+
+      /* connect-hint empty state (Quotes with no account) */
+      #mt5[data-tier="mobile"] .m-empty { padding:24px 18px; color:var(--muted); text-align:center; font-size:13px; }
+
+      /* one-tap SELL/BUY band — pinned at the bottom of the chart view, above the nav.
+         SELL=red (bid), BUY=blue (ask) for at-a-glance safety. */
+      #mt5[data-tier="mobile"] .m-band { display:flex; align-items:stretch; flex:none; height:46px;
+        background:var(--panel); border-top:1px solid var(--line2); }
+      #mt5[data-tier="mobile"] .m-band-side { flex:1; display:flex; align-items:center; justify-content:center;
+        gap:7px; border:0; color:#fff; }
+      #mt5[data-tier="mobile"] .m-band-sell { background:var(--down); }
+      #mt5[data-tier="mobile"] .m-band-buy { background:var(--accent); }
+      #mt5[data-tier="mobile"] .m-band-side:disabled { opacity:.45; }
+      #mt5[data-tier="mobile"] .m-band-side:active:not(:disabled) { filter:brightness(0.9); }
+      #mt5[data-tier="mobile"] .m-band-lbl { font-size:10px; font-weight:700; letter-spacing:.6px; opacity:.9; }
+      #mt5[data-tier="mobile"] .m-band-px { font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; }
+      #mt5[data-tier="mobile"] .m-band-vol { flex:none; width:144px; display:flex; align-items:center;
+        justify-content:space-between; background:var(--panel2); }
+      #mt5[data-tier="mobile"] .m-band-step { align-self:stretch; width:44px; flex:none; background:none; border:0;
+        color:var(--fg); font-size:18px; line-height:1; }
+      #mt5[data-tier="mobile"] .m-band-step:active:not(:disabled) { background:var(--hover); }
+      #mt5[data-tier="mobile"] .m-band-step:disabled { opacity:.45; }
+      /* directly-editable lot field (Item 1) — transparent, centered, no number spinners.
+         16px so iOS doesn't zoom the page when it's focused. */
+      #mt5[data-tier="mobile"] .m-band-volinput { flex:1 1 0; min-width:0; width:100%; height:100%;
+        background:transparent; border:0; text-align:center; color:var(--fg); font-size:16px; font-weight:700;
+        font-variant-numeric:tabular-nums; padding:0; -moz-appearance:textfield; }
+      #mt5[data-tier="mobile"] .m-band-volinput::-webkit-outer-spin-button,
+      #mt5[data-tier="mobile"] .m-band-volinput::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+      #mt5[data-tier="mobile"] .m-band-volinput:focus { outline:none; }
+      /* band order confirmation (bottom sheet) */
+      #mt5[data-tier="mobile"] .m-confirm-back { position:fixed; inset:0; z-index:55; background:var(--backdrop);
+        display:flex; align-items:flex-end; }
+      #mt5[data-tier="mobile"] .m-confirm { width:100%; background:var(--panel); border-top:1px solid var(--line2);
+        border-radius:14px 14px 0 0; padding:16px 16px calc(16px + env(safe-area-inset-bottom)); }
+      #mt5[data-tier="mobile"] .m-confirm-h { font-size:11px; color:var(--muted); text-transform:uppercase;
+        letter-spacing:.6px; margin-bottom:8px; }
+      #mt5[data-tier="mobile"] .m-confirm-body { font-size:18px; color:var(--fg); margin-bottom:16px; }
+      #mt5[data-tier="mobile"] .m-confirm-px { font-size:14px; color:var(--muted); margin-top:4px; font-variant-numeric:tabular-nums; }
+      #mt5[data-tier="mobile"] .m-confirm-btns { display:flex; gap:10px; }
+      #mt5[data-tier="mobile"] .m-confirm-cancel, #mt5[data-tier="mobile"] .m-confirm-go {
+        flex:1; min-height:50px; border-radius:10px; border:0; font-size:15px; font-weight:700; }
+      #mt5[data-tier="mobile"] .m-confirm-cancel { background:var(--hover); color:var(--fg); border:1px solid var(--line2); }
+      #mt5[data-tier="mobile"] .m-confirm-go { color:#fff; }
+      #mt5[data-tier="mobile"] .m-confirm-go.sell { background:var(--down); }
+      #mt5[data-tier="mobile"] .m-confirm-go.buy { background:var(--accent); }
+
+      /* ── MT5 MOBILE CONTENT (Stage 2) — Quotes rows / Trade summary+positions /
+         History sub-tabs+summary+deals. Scoped mobile-only; the preview harness renders
+         these under the same #mt5[data-tier="mobile"] so it's pixel-faithful. ── */
+
+      /* scrollable view containers + tidy (no native scrollbar on touch) */
+      #mt5[data-tier="mobile"] .m-trade, #mt5[data-tier="mobile"] .m-quotes, #mt5[data-tier="mobile"] .m-hist {
+        flex:1 1 0; min-height:0; overflow-y:auto; overflow-x:hidden; }
+      #mt5[data-tier="mobile"] .m-trade::-webkit-scrollbar, #mt5[data-tier="mobile"] .m-quotes::-webkit-scrollbar,
+      #mt5[data-tier="mobile"] .m-hist::-webkit-scrollbar, #mt5[data-tier="mobile"] .m-head-tf::-webkit-scrollbar { display:none; }
+      #mt5[data-tier="mobile"] .m-trade, #mt5[data-tier="mobile"] .m-quotes, #mt5[data-tier="mobile"] .m-hist,
+      #mt5[data-tier="mobile"] .m-head-tf { scrollbar-width:none; }
+
+      /* dir / side colours (MT5: buy=blue, sell=red; profit=green, loss=red) */
+      #mt5[data-tier="mobile"] .m-buy { color:var(--accent); font-weight:600; }
+      #mt5[data-tier="mobile"] .m-sell { color:var(--down); font-weight:600; }
+      #mt5[data-tier="mobile"] .m-up { color:var(--up); }
+      #mt5[data-tier="mobile"] .m-down { color:var(--down); }
+
+      /* account / history summary band — dotted leaders */
+      #mt5[data-tier="mobile"] .m-acct { padding:4px 16px; }
+      #mt5[data-tier="mobile"] .m-acct-row { display:flex; align-items:baseline; padding:7px 0; font-size:15px; }
+      #mt5[data-tier="mobile"] .m-acct-k { color:var(--fg); font-weight:600; white-space:nowrap; }
+      #mt5[data-tier="mobile"] .m-acct-led { flex:1 1 auto; min-width:14px; margin:0 7px;
+        border-bottom:1px dotted var(--line2); position:relative; top:-4px; }
+      #mt5[data-tier="mobile"] .m-acct-v { color:var(--fg); font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+      /* section band ("Positions") */
+      #mt5[data-tier="mobile"] .m-sec { display:flex; align-items:center; padding:8px 16px; background:var(--surface);
+        color:var(--muted); font-size:13px; font-weight:600; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+
+      /* shared position / deal rows */
+      #mt5[data-tier="mobile"] .m-row { display:flex; align-items:center; gap:10px; padding:11px 16px;
+        border-bottom:1px solid var(--row-line); cursor:pointer; }
+      #mt5[data-tier="mobile"] .m-row:active { background:var(--row-hover); }
+      #mt5[data-tier="mobile"] .m-row-main { flex:1 1 auto; min-width:0; }
+      #mt5[data-tier="mobile"] .m-row-top { font-size:15px; color:var(--fg); }
+      #mt5[data-tier="mobile"] .m-row-top b { font-weight:700; }
+      #mt5[data-tier="mobile"] .m-row-sub { font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums; margin-top:3px; white-space:nowrap; }
+      #mt5[data-tier="mobile"] .m-row-pnl { font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; flex:none; }
+      #mt5[data-tier="mobile"] .m-row-right { display:flex; flex-direction:column; align-items:flex-end; flex:none; }
+      #mt5[data-tier="mobile"] .m-row-time { font-size:11px; color:var(--muted); }
+      #mt5[data-tier="mobile"] .m-row-right .m-row-pnl { font-size:15px; margin-top:3px; }
+      #mt5[data-tier="mobile"] .m-row-x { flex:none; width:36px; height:36px; border-radius:8px; background:none;
+        border:0; color:var(--muted); font-size:13px; }
+      #mt5[data-tier="mobile"] .m-row-x:hover { background:var(--hover); color:var(--down); }
+
+      /* swipeable position row (Item 5): swipe LEFT to reveal Modify; the ✕ stays visible.
+         The track is opaque so it covers the revealed ✎ at rest; pan-y lets the list scroll. */
+      #mt5[data-tier="mobile"] .m-posrow { display:flex; align-items:stretch; border-bottom:1px solid var(--row-line); }
+      #mt5[data-tier="mobile"] .m-posrow-swipe { flex:1 1 auto; min-width:0; position:relative; overflow:hidden; }
+      #mt5[data-tier="mobile"] .m-posrow-modify { position:absolute; top:0; right:0; bottom:0; width:58px;
+        display:flex; align-items:center; justify-content:center; background:var(--accent); color:var(--on-accent);
+        border:0; font-size:18px; z-index:1; }
+      #mt5[data-tier="mobile"] .m-posrow-track { position:relative; z-index:2; min-height:100%; display:flex;
+        align-items:center; gap:10px; padding:11px 11px 11px 16px; background:var(--bg); touch-action:pan-y; will-change:transform; }
+      #mt5[data-tier="mobile"] .m-posrow-track:active { background:var(--row-hover); }
+      /* The P&L (end of the track) sits nearer the × now: smaller track right-padding + a narrower
+         × whose glyph hugs the left, so the floating P&L and the close button read as a pair (#18). */
+      #mt5[data-tier="mobile"] .m-posrow-x { flex:none; width:44px; background:none; border:0; color:var(--muted); font-size:14px;
+        display:flex; align-items:center; justify-content:flex-start; padding-left:4px; }
+      #mt5[data-tier="mobile"] .m-posrow-x:active { color:var(--down); background:var(--hover); }
+
+      /* long-press position action menu (Item 7) — a bottom sheet (same actions as the swipe) */
+      #mt5[data-tier="mobile"] .m-actions-back { position:fixed; inset:0; z-index:55; background:var(--backdrop);
+        display:flex; align-items:flex-end; }
+      #mt5[data-tier="mobile"] .m-actions { width:100%; background:var(--panel); border-top:1px solid var(--line2);
+        border-radius:14px 14px 0 0; padding:8px 8px calc(8px + env(safe-area-inset-bottom)); }
+      #mt5[data-tier="mobile"] .m-actions-h { padding:12px 12px 10px; font-size:15px; color:var(--fg);
+        border-bottom:1px solid var(--line); margin-bottom:6px; }
+      #mt5[data-tier="mobile"] .m-actions-item { display:block; width:100%; text-align:left; background:none; border:0;
+        color:var(--fg); font-size:15px; padding:14px 12px; border-radius:8px; }
+      #mt5[data-tier="mobile"] .m-actions-item:active { background:var(--hover); }
+      #mt5[data-tier="mobile"] .m-actions-danger { color:var(--down); }
+      #mt5[data-tier="mobile"] .m-actions-cancel { display:block; width:100%; margin-top:6px; background:var(--hover);
+        border:1px solid var(--line2); color:var(--fg); font-size:15px; font-weight:700; padding:14px; border-radius:10px; }
+
+      /* quotes rows */
+      /* Watchlist row = a swipe-left-to-remove track (#17). The row (.m-q) slides over a red
+         Remove button revealed on its right; tapping the row charts, swiping reveals Remove. */
+      #mt5[data-tier="mobile"] .m-q-row { position:relative; border-bottom:1px solid var(--row-line); overflow:hidden; }
+      #mt5[data-tier="mobile"] .m-q-del { position:absolute; top:0; right:0; bottom:0; width:84px; z-index:1;
+        display:flex; align-items:center; justify-content:center; gap:3px; background:var(--down); color:#fff;
+        border:0; font-size:12px; font-weight:700; cursor:pointer; }
+      #mt5[data-tier="mobile"] .m-q { position:relative; z-index:2; display:flex; align-items:center; justify-content:space-between; gap:12px;
+        padding:10px 16px; background:var(--bg); cursor:pointer; touch-action:pan-y; will-change:transform; }
+      #mt5[data-tier="mobile"] .m-q.on { background:var(--sel); }
+      #mt5[data-tier="mobile"] .m-q-l { min-width:0; }
+      #mt5[data-tier="mobile"] .m-q-sym { font-size:15px; font-weight:700; color:var(--fg); }
+      #mt5[data-tier="mobile"] .m-q-time { font-size:11px; color:var(--muted); margin-top:3px; }
+      #mt5[data-tier="mobile"] .m-q-r { display:flex; gap:16px; flex:none; }
+      #mt5[data-tier="mobile"] .m-q-px { font-size:17px; font-weight:600; font-variant-numeric:tabular-nums; color:var(--fg); white-space:nowrap; }
+      #mt5[data-tier="mobile"] .m-q-px.up { color:var(--up); }
+      #mt5[data-tier="mobile"] .m-q-px.down { color:var(--down); }
+
+      /* History period dropdown — lives IN the header, pushed to the right of the title (Item 6) */
+      #mt5[data-tier="mobile"] .m-head-period { position:relative; margin-left:auto; flex:none; }
+      #mt5[data-tier="mobile"] .m-head-pbtn { min-height:44px; padding:0 12px; font-size:13px; font-weight:700;
+        background:var(--hover); border:1px solid var(--line2); color:var(--fg); border-radius:8px;
+        display:inline-flex; align-items:center; gap:5px; }
+      #mt5[data-tier="mobile"] .m-head-pmenu { position:absolute; top:calc(100% + 6px); right:0; z-index:20;
+        min-width:200px; background:var(--panel); border:1px solid var(--line2); border-radius:10px;
+        box-shadow:0 10px 28px var(--shadow); overflow:hidden; }
+      #mt5[data-tier="mobile"] .m-head-pmenu button { display:block; width:100%; text-align:left; background:none;
+        border:0; color:var(--fg); padding:13px 14px; font-size:14px; }
+      #mt5[data-tier="mobile"] .m-head-pmenu button.on { color:var(--accent); font-weight:600; }
+      #mt5[data-tier="mobile"] .m-head-pmenu button:hover { background:var(--hover); }
+      /* history sub-tabs */
+      #mt5[data-tier="mobile"] .m-hist-tabs { display:flex; border-bottom:1px solid var(--line); }
+      #mt5[data-tier="mobile"] .m-hist-tabs button { flex:1; min-height:44px; background:none; border:0;
+        border-bottom:2px solid transparent; color:var(--muted); font-size:13px; font-weight:600; letter-spacing:.3px; }
+      #mt5[data-tier="mobile"] .m-hist-tabs button.on { color:var(--fg); border-bottom-color:var(--accent); }
+      #mt5[data-tier="mobile"] .m-hist-sum { border-bottom:1px solid var(--line); }
+
+      /* dedicated account view (Item 2) — a focused sheet of the active account's details */
+      #mt5[data-tier="mobile"] .m-acctview { flex:1 1 0; min-height:0; overflow-y:auto; }
+      #mt5[data-tier="mobile"] .m-acctview-hero { padding:18px 16px 14px; border-bottom:1px solid var(--line); }
+      #mt5[data-tier="mobile"] .m-acctview-name { font-size:20px; font-weight:700; color:var(--fg); }
+      #mt5[data-tier="mobile"] .m-acctview-sub { font-size:13px; color:var(--muted); margin-top:4px; font-variant-numeric:tabular-nums; }
+      #mt5[data-tier="mobile"] .m-acctview-sec { padding:14px 16px 6px; font-size:11px; text-transform:uppercase;
+        letter-spacing:.6px; color:var(--muted); font-weight:600; }
+      #mt5[data-tier="mobile"] .m-acctview-row { display:flex; align-items:baseline; justify-content:space-between;
+        gap:12px; padding:11px 16px; border-bottom:1px solid var(--row-line); }
+      #mt5[data-tier="mobile"] .m-acctview-k { font-size:14px; color:var(--muted); flex:none; }
+      #mt5[data-tier="mobile"] .m-acctview-v { font-size:15px; font-weight:600; color:var(--fg);
+        font-variant-numeric:tabular-nums; text-align:right; word-break:break-word; }
+      /* per-state status dot (Item 1a): green=connected, amber=connecting, red=cold */
+      #mt5[data-tier="mobile"] .m-acctview-dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+        margin:0 5px 0 8px; vertical-align:middle; background:var(--muted); }
+      #mt5[data-tier="mobile"] .m-acctview-dot-connected { background:var(--green); box-shadow:0 0 6px var(--green-glow); }
+      #mt5[data-tier="mobile"] .m-acctview-dot-connecting { background:var(--amber); }
+      #mt5[data-tier="mobile"] .m-acctview-dot-cold { background:var(--down); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="renderer.js"></script>
+  </body>
+</html>

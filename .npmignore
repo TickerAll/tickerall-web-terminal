@@ -1,0 +1,3 @@
+# Keep the published package lean: ship the built bundle, not its sourcemaps
+# (~14 MB of the tarball; not needed by consumers embedding prebuilt assets).
+**/*.map
