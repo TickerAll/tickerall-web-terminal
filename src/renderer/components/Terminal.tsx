@@ -1261,6 +1261,7 @@ export function Terminal({ user, onLogout }: { user?: AuthUser; onLogout: () => 
       id: `o${p.ticket}`, source: 'real', side: normSide(p.side), open: true,
       openTime: tradeTimeSec(p.openTime), openPrice: p.entryPrice,
       currentPrice: p.currentPrice, profit: p.profit, volume: p.volume,
+      stopLoss: p.stopLoss, takeProfit: p.takeProfit,
     }));
     return [...closed, ...open];
   }, [connected, historyBySymbol]);

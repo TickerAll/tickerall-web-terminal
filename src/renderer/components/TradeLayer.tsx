@@ -53,6 +53,8 @@ export interface ChartTrade {
   currentPrice?: number;    // open trades only: the live price (P&L is fed live via `profit`)
   profit: number;           // signed money — realized (closed) or floating (open)
   volume?: number;          // lots (for the on-chart label, e.g. "BUY 0.10")
+  stopLoss?: number;        // open trades only: protective stop-loss price (0/undefined = none) (R1K-690)
+  takeProfit?: number;      // open trades only: take-profit price (0/undefined = none) (R1K-690)
 }
 
 /** The minimal chart access this overlay needs (the integrator passes ChartPane's
@@ -86,6 +88,7 @@ const ARROW_H = 17;         // entry-arrow height (tip to base)
 const ARROW_GAP = 4;        // gap between the price point and the arrow base/tip
 const ARROW_HALO = 3.5;     // halo-outline width drawn under the fill (separates the arrow from the candle it sits on)
 const LEVEL_W = 2.5;        // open-price level line width (clearly visible, per MT5)
+const SLTP_W = 1.5;         // SL/TP level line width — thinner than the entry level (R1K-690)
 const LINE_DASH = [6, 5];   // dashed pattern for the open-price level + the closed-trade connector
 const LABEL_FONT = '700 13px ui-monospace, SFMono-Regular, Menlo, monospace'; // BOLD + larger so it reads over candles
 const TAG_FONT = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace';   // right-axis price tag (bold)
@@ -475,6 +478,33 @@ export function TradeLayer({ paneRef, chart, trades, symbol, positionSymbols }: 
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
+
+        // ── SL / TP levels (R1K-690): thin dashed full-width lines at the position's stop-loss /
+        //    take-profit, so a trader sees their protective levels on-chart (parity with the
+        //    futures platforms Natty compared against). Drawn only when the level is set (>0) and
+        //    projects onto the visible price scale. SL in `down` (red), TP in `up` (green), thinner
+        //    than the entry level, each with a right-axis price tag like the entry.
+        for (const lvl of [
+          { px: t.stopLoss, col: down },
+          { px: t.takeProfit, col: up },
+        ]) {
+          if (lvl.px == null || lvl.px <= 0) continue;
+          const yl = c.priceToCoordinate(lvl.px);
+          if (yl === null) continue;          // level off the visible price scale → nothing to draw
+          const ylr = Math.round(yl) + 0.5;
+          ctx.save();
+          ctx.strokeStyle = lvl.col;
+          ctx.lineWidth = SLTP_W;
+          ctx.globalAlpha = 0.9;
+          ctx.setLineDash(LINE_DASH);
+          ctx.beginPath();
+          ctx.moveTo(0, ylr);
+          ctx.lineTo(W, ylr);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+          priceTag(ctx, yl, fmtPx(lvl.px), lvl.col, onAccent, W, H);
+        }
 
         // Big haloed direction arrow + BUY/SELL tag ON the candle the position was opened in
         // (snapped to that bar; only while that candle is on-screen). An open position's arrow IS an
